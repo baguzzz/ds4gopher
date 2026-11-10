@@ -39,4 +39,4 @@ Trigger kadang muncul sebagai axes `lZ`/`lRz`, kadang sebagai tombol 6/7. Cek `-
 
 Repo ini sudah punya GitHub Actions. Push ke branch `main` → workflow otomatis build. Hasil ada di tab Actions.
 
-Atau build lokal (butuh Visual Studio):
+Atau build lokal (butuh Visual Studio): cl /EHsc /std:c++17 /O2 /MT src\ds4gopher.cpp /Fe:ds4gopher.exe /link dinput8.lib dxguid.lib user32.lib
