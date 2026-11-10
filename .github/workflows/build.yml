@@ -1,0 +1,83 @@
+name: Build DS4Gopher
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Compile ds4gopher.exe
+        shell: cmd
+        run: |
+          cl /nologo /EHsc /std:c++17 /O2 /MT ^
+             src\ds4gopher.cpp ^
+             /Fe:ds4gopher.exe ^
+             /link dinput8.lib dxguid.lib user32.lib
+          if errorlevel 1 exit /b 1
+
+      - name: Verifikasi build
+        shell: cmd
+        run: |
+          if not exist ds4gopher.exe (
+            echo [X] Build gagal
+            exit /b 1
+          )
+          echo [+] Build sukses
+          for %%F in (ds4gopher.exe) do echo    Size: %%~zF bytes
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: ds4gopher-windows-x64
+          path: ds4gopher.exe
+          retention-days: 30
+
+      - name: Upload Config Editor
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-editor
+          path: config-editor.html
+          retention-days: 30
+
+      - name: Upload AHK Script
+        uses: actions/upload-artifact@v4
+        with:
+          name: keyboard-virtual-ahk
+          path: ahk/keyboard-virtual.ahk
+          retention-days: 30
+
+      - name: Upload Default Config
+        uses: actions/upload-artifact@v4
+        with:
+          name: default-config
+          path: config.ini
+          retention-days: 30
+
+      - name: Create Release (jika push tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ds4gopher.exe
+            config-editor.html
+            config.ini
+            ahk/keyboard-virtual.ahk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
