@@ -28,7 +28,6 @@ static int                   g_speedIdx      = 1;
 static int                   g_speeds[3]     = { 6, 14, 28 };
 static int                   g_deadzone      = 8000;
 
-// Variabel untuk Kalibrasi Titik Netral
 static LONG neutralLX = 0, neutralLY = 0, neutralRX = 0, neutralRY = 0;
 
 // -------------------- Config Maps --------------------
@@ -40,21 +39,15 @@ static std::map<std::string, int> g_btnIdx = {
 };
 
 static std::map<std::string, std::string> g_actions = {
-    {"MouseLeft",   "L1"},
-    {"MouseRight",  "R1"},
-    {"MouseMiddle", "L3"},
-    {"Cross",       "Cross"},
-    {"Circle",      "Circle"},
-    {"Triangle",    "Triangle"},
-    {"Square",      "Square"},
-    {"Share",       "Share"},
-    {"Options",     "Options"},
-    {"R3",          "R3"},
-    {"L2",          "L2"},
-    {"R2",          "R2"},
-    {"SpeedCycle",  "L3+R3"},
-    {"Disable",     "Options+Share"}
+    {"MouseLeft",   "L1"}, {"MouseRight",  "R1"}, {"MouseMiddle", "L3"},
+    {"Cross",       "Cross"}, {"Circle",    "Circle"}, {"Triangle", "Triangle"},
+    {"Square",      "Square"}, {"Share",    "Share"}, {"Options", "Options"},
+    {"R3",          "R3"}, {"L2", "L2"}, {"R2", "R2"},
+    {"SpeedCycle",  "L3+R3"}, {"Disable", "Options+Share"}
 };
+
+// Map untuk Custom Keyboard Keys
+static std::map<std::string, int> g_customKeys;
 
 // -------------------- Helper --------------------
 static std::string Trim(const std::string& s) {
@@ -95,6 +88,9 @@ static void LoadConfig(const char* path) {
             try { g_btnIdx[key] = std::stoi(val); } catch (...) {}
         } else if (section == "Actions") {
             g_actions[key] = val;
+        } else if (section == "CustomKeys") {
+            // Membaca hex atau desimal (misal: 0x41 atau 65)
+            try { g_customKeys[key] = std::stoi(val, nullptr, 0); } catch (...) {}
         } else if (section == "General") {
             if      (key == "Deadzone")        { try { g_deadzone = std::stoi(val); } catch (...) {} }
             else if (key == "Speed1")          { try { g_speeds[0] = std::stoi(val); } catch (...) {} }
@@ -111,6 +107,14 @@ static int BtnOf(const std::string& action) {
     auto bit = g_btnIdx.find(it->second);
     if (bit == g_btnIdx.end()) return -1;
     return bit->second;
+}
+
+static bool IsButtonPressed(const std::string& btnName) {
+    auto it = g_btnIdx.find(btnName);
+    if (it == g_btnIdx.end()) return false;
+    int idx = it->second;
+    if (idx < 0 || idx >= 128) return false;
+    return (g_js.rgbButtons[idx] & 0x80) != 0;
 }
 
 static bool IsCombo(const std::string& action) {
@@ -130,9 +134,7 @@ static bool IsCombo(const std::string& action) {
 static bool IsActionActive(const std::string& action) {
     auto it = g_actions.find(action);
     if (it == g_actions.end()) return false;
-    if (it->second.find('+') != std::string::npos) {
-        return IsCombo(action);
-    }
+    if (it->second.find('+') != std::string::npos) return IsCombo(action);
     int idx = BtnOf(action);
     if (idx < 0 || idx >= 128) return false;
     return (g_js.rgbButtons[idx] & 0x80) != 0;
@@ -143,8 +145,7 @@ static void MoveMouse(int dx, int dy) {
     if (dx == 0 && dy == 0) return;
     INPUT in = {};
     in.type = INPUT_MOUSE;
-    in.mi.dx = dx;
-    in.mi.dy = dy;
+    in.mi.dx = dx; in.mi.dy = dy;
     in.mi.dwFlags = MOUSEEVENTF_MOVE;
     SendInput(1, &in, sizeof(INPUT));
 }
@@ -174,12 +175,9 @@ static void KeyAction(WORD vk, bool down) {
     SendInput(1, &in, sizeof(INPUT));
 }
 
-// -------------------- Stick Normalize --------------------
 static float NormStick(LONG v) {
     if (std::abs(v) < g_deadzone) return 0.0f;
-    float s = (v > 0 ? 1.0f : -1.0f) *
-              (float)(std::abs(v) - g_deadzone) /
-              (32767.0f - g_deadzone);
+    float s = (v > 0 ? 1.0f : -1.0f) * (float)(std::abs(v) - g_deadzone) / (32767.0f - g_deadzone);
     if (s >  1.0f) s =  1.0f;
     if (s < -1.0f) s = -1.0f;
     return s;
@@ -187,40 +185,21 @@ static float NormStick(LONG v) {
 
 // -------------------- DirectInput Init --------------------
 static BOOL CALLBACK EnumCallback(LPCDIDEVICEINSTANCE pdidi, LPVOID) {
-    if (FAILED(g_pDI->CreateDevice(pdidi->guidInstance, &g_pDev, nullptr)))
-        return DIENUM_CONTINUE;
+    if (FAILED(g_pDI->CreateDevice(pdidi->guidInstance, &g_pDev, nullptr))) return DIENUM_CONTINUE;
     return DIENUM_STOP;
 }
 
 static bool InitDirectInput() {
-    if (FAILED(DirectInput8Create(GetModuleHandle(nullptr),
-                                  DIRECTINPUT_VERSION, IID_IDirectInput8,
-                                  (void**)&g_pDI, nullptr))) {
-        printf("[X] DirectInput8Create gagal.\n");
-        return false;
-    }
-    if (FAILED(g_pDI->EnumDevices(DI8DEVCLASS_GAMECTRL,
-                                  EnumCallback, nullptr,
-                                  DIEDFL_ATTACHEDONLY)) || !g_pDev) {
-        printf("[X] Tidak ada gamepad terdeteksi.\n");
-        return false;
-    }
-    if (FAILED(g_pDev->SetDataFormat(&c_dfDIJoystick2))) {
-        printf("[X] SetDataFormat gagal.\n"); return false;
-    }
-    if (FAILED(g_pDev->SetCooperativeLevel(GetConsoleWindow(),
-             DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) {
-        printf("[X] SetCooperativeLevel gagal (jalankan sebagai Admin).\n");
-        return false;
-    }
+    if (FAILED(DirectInput8Create(GetModuleHandle(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8, (void**)&g_pDI, nullptr))) return false;
+    if (FAILED(g_pDI->EnumDevices(DI8DEVCLASS_GAMECTRL, EnumCallback, nullptr, DIEDFL_ATTACHEDONLY)) || !g_pDev) return false;
+    if (FAILED(g_pDev->SetDataFormat(&c_dfDIJoystick2))) return false;
+    if (FAILED(g_pDev->SetCooperativeLevel(GetConsoleWindow(), DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) return false;
 
-    // Paksa semua sumbu analog menggunakan standar -32768 sd 32767
     DIPROPRANGE range;
     range.diph.dwSize = sizeof(DIPROPRANGE);
     range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
     range.diph.dwHow = DIPH_BYOFFSET;
-    range.lMin = -32768;
-    range.lMax = 32767;
+    range.lMin = -32768; range.lMax = 32767;
 
     range.diph.dwObj = DIJOFS_X;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
     range.diph.dwObj = DIJOFS_Y;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
@@ -228,118 +207,73 @@ static bool InitDirectInput() {
     range.diph.dwObj = DIJOFS_RY; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
 
     g_pDev->Acquire();
-
-    // ====================================================================
-    // KALIBRASI OTOMATIS: Baca posisi awal (titik netral) stik analog
-    // Mencegah mouse bergerak/scroll sendiri saat aplikasi baru dibuka
-    // ====================================================================
-    Sleep(50); // Beri waktu driver untuk siap
+    Sleep(50);
     g_pDev->Poll();
     if (SUCCEEDED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) {
-        neutralLX = g_js.lX;
-        neutralLY = g_js.lY;
-        neutralRX = g_js.lRx;
-        neutralRY = g_js.lRy;
+        neutralLX = g_js.lX; neutralLY = g_js.lY;
+        neutralRX = g_js.lRx; neutralRY = g_js.lRy;
     }
-    // ====================================================================
-
-    printf("[+] DS4 terdeteksi dan dikalibrasi.\n");
     return true;
 }
 
-// -------------------- Console Toggle --------------------
 static void ToggleConsole() {
     HWND h = GetConsoleWindow();
     if (!h) return;
-    if (g_consoleHidden) { 
-        ShowWindow(h, SW_SHOW); 
-        SetForegroundWindow(h); 
-        g_consoleHidden = false;
-    }
-    else { 
-        ShowWindow(h, SW_HIDE); 
-        g_consoleHidden = true;
-    }
+    if (g_consoleHidden) { ShowWindow(h, SW_SHOW); SetForegroundWindow(h); g_consoleHidden = false; }
+    else { ShowWindow(h, SW_HIDE); g_consoleHidden = true; }
 }
 
 // -------------------- Main Loop --------------------
 static void ProcessFrame() {
     if (FAILED(g_pDev->Poll())) { g_pDev->Acquire(); return; }
-    if (FAILED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) {
-        g_pDev->Acquire(); return;
-    }
+    if (FAILED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) { g_pDev->Acquire(); return; }
 
     bool isConsoleFocused = (GetForegroundWindow() == GetConsoleWindow());
 
-    // ---------- Options: toggle console ----------
     static bool lastHide = false;
     bool curHide = IsActionActive("Options");
     if (curHide && !lastHide) ToggleConsole();
     lastHide = curHide;
 
-    // ---------- ANTI-KETIKAN TERMINAL ----------
-    if (isConsoleFocused && !g_consoleHidden) {
-        return; 
-    }
+    if (isConsoleFocused && !g_consoleHidden) return;
 
-    // ---------- Analog kiri -> mouse (dikurangi nilai netral) ----------
     float lx = NormStick(g_js.lX - neutralLX);
     float ly = NormStick(g_js.lY - neutralLY);
     int speed = g_speeds[g_speedIdx];
-    MoveMouse((int)(lx * std::abs(lx) * speed),
-              (int)(ly * std::abs(ly) * speed));
+    MoveMouse((int)(lx * std::abs(lx) * speed), (int)(ly * std::abs(ly) * speed));
 
-    // ---------- Analog kanan -> scroll (dikurangi nilai netral) ----------
     float ry = NormStick(g_js.lRy - neutralRY);
-    if (std::abs(ry) > 0.2f) { // Threshold 0.2 agar lebih aman
-        ScrollMouse((int)(ry * 120.0f));
-    }
+    if (std::abs(ry) > 0.2f) ScrollMouse((int)(ry * 120.0f));
 
-    // ---------- Tombol mouse ----------
+    // --- Aksi Bawaan ---
     static bool lastL = false, lastR = false, lastM = false;
-    bool curL = IsActionActive("MouseLeft");
-    bool curR = IsActionActive("MouseRight");
-    bool curM = IsActionActive("MouseMiddle");
-    if (curL && !lastL) MouseClick(MOUSEEVENTF_LEFTDOWN);
-    if (!curL && lastL) MouseClick(MOUSEEVENTF_LEFTUP);
-    if (curR && !lastR) MouseClick(MOUSEEVENTF_RIGHTDOWN);
-    if (!curR && lastR) MouseClick(MOUSEEVENTF_RIGHTUP);
-    if (curM && !lastM) MouseClick(MOUSEEVENTF_MIDDLEDOWN);
-    if (!curM && lastM) MouseClick(MOUSEEVENTF_MIDDLEUP);
+    bool curL = IsActionActive("MouseLeft"); bool curR = IsActionActive("MouseRight"); bool curM = IsActionActive("MouseMiddle");
+    if (curL && !lastL) MouseClick(MOUSEEVENTF_LEFTDOWN); if (!curL && lastL) MouseClick(MOUSEEVENTF_LEFTUP);
+    if (curR && !lastR) MouseClick(MOUSEEVENTF_RIGHTDOWN); if (!curR && lastR) MouseClick(MOUSEEVENTF_RIGHTUP);
+    if (curM && !lastM) MouseClick(MOUSEEVENTF_MIDDLEDOWN); if (!curM && lastM) MouseClick(MOUSEEVENTF_MIDDLEUP);
     lastL = curL; lastR = curR; lastM = curM;
 
-    // ---------- Cross: klik kiri juga ----------
-    static bool lastCross = false;
-    bool curCross = IsActionActive("Cross");
-    if (curCross && !lastCross) MouseClick(MOUSEEVENTF_LEFTDOWN);
-    if (!curCross && lastCross) MouseClick(MOUSEEVENTF_LEFTUP);
+    static bool lastCross = false; bool curCross = IsActionActive("Cross");
+    if (curCross && !lastCross) MouseClick(MOUSEEVENTF_LEFTDOWN); if (!curCross && lastCross) MouseClick(MOUSEEVENTF_LEFTUP);
     lastCross = curCross;
 
-    // ---------- Circle: Enter ----------
-    static bool lastEnter = false;
-    bool curEnter = IsActionActive("Circle");
-    if (curEnter != lastEnter) KeyAction(VK_RETURN, curEnter);
-    lastEnter = curEnter;
+    static bool lastEnter = false; bool curEnter = IsActionActive("Circle");
+    if (curEnter != lastEnter) KeyAction(VK_RETURN, curEnter); lastEnter = curEnter;
 
-    // ---------- Share: Esc ----------
-    static bool lastEsc = false;
-    bool curEsc = IsActionActive("Share");
-    if (curEsc != lastEsc) KeyAction(VK_ESCAPE, curEsc);
-    lastEsc = curEsc;
+    static bool lastEsc = false; bool curEsc = IsActionActive("Share");
+    if (curEsc != lastEsc) KeyAction(VK_ESCAPE, curEsc); lastEsc = curEsc;
 
-    // ---------- R3: F2 ----------
-    static bool lastF2 = false;
-    bool curF2 = IsActionActive("R3");
-    if (curF2 != lastF2) KeyAction(VK_F2, curF2);
-    lastF2 = curF2;
+    static bool lastF2 = false; bool curF2 = IsActionActive("R3");
+    if (curF2 != lastF2) KeyAction(VK_F2, curF2); lastF2 = curF2;
 
-    // ---------- Triangle: F24 ----------
-    static bool lastVk = false;
-    bool curVk = IsActionActive("Triangle");
-    if (curVk != lastVk) KeyAction(VK_F24, curVk);
-    lastVk = curVk;
+    static bool lastVk = false; bool curVk = IsActionActive("Triangle");
+    if (curVk != lastVk) KeyAction(VK_F24, curVk); lastVk = curVk;
 
-    // ---------- D-Pad: arrow keys ----------
+    static bool lastL2 = false, lastR2 = false;
+    bool l2On = IsActionActive("L2"); bool r2On = IsActionActive("R2");
+    if (l2On != lastL2) KeyAction(VK_SPACE, l2On); if (r2On != lastR2) KeyAction(VK_BACK, r2On);
+    lastL2 = l2On; lastR2 = r2On;
+
     DWORD pov = g_js.rgdwPOV[0];
     static bool upD=false,dnD=false,lfD=false,rtD=false;
     bool up=false,dn=false,lf=false,rt=false;
@@ -349,32 +283,19 @@ static void ProcessFrame() {
         if (pov > 13500 && pov <= 22500) dn = true;
         if (pov > 22500 && pov <= 31500) lf = true;
     }
-    if (up != upD) { KeyAction(VK_UP,    up); upD = up; }
-    if (dn != dnD) { KeyAction(VK_DOWN,  dn); dnD = dn; }
-    if (lf != lfD) { KeyAction(VK_LEFT,  lf); lfD = lf; }
+    if (up != upD) { KeyAction(VK_UP, up); upD = up; }
+    if (dn != dnD) { KeyAction(VK_DOWN, dn); dnD = dn; }
+    if (lf != lfD) { KeyAction(VK_LEFT, lf); lfD = lf; }
     if (rt != rtD) { KeyAction(VK_RIGHT, rt); rtD = rt; }
 
-    // ---------- L2 / R2 (Menggunakan Button Mapping) ----------
-    static bool lastL2 = false, lastR2 = false;
-    bool l2On = IsActionActive("L2");
-    bool r2On = IsActionActive("R2");
-    if (l2On != lastL2) KeyAction(VK_SPACE, l2On);
-    if (r2On != lastR2) KeyAction(VK_BACK, r2On);
-    lastL2 = l2On; lastR2 = r2On;
-
-    // ---------- Speed cycle ----------
-    static bool lastSpeedCombo = false;
-    bool speedCombo = IsActionActive("SpeedCycle");
+    static bool lastSpeedCombo = false; bool speedCombo = IsActionActive("SpeedCycle");
     if (speedCombo && !lastSpeedCombo) {
         g_speedIdx = (g_speedIdx + 1) % 3;
-        printf("[i] Kecepatan: level %d (speed=%d)\n",
-               g_speedIdx + 1, g_speeds[g_speedIdx]);
+        printf("[i] Kecepatan: level %d (speed=%d)\n", g_speedIdx + 1, g_speeds[g_speedIdx]);
     }
     lastSpeedCombo = speedCombo;
 
-    // ---------- Disable/enable gopher ----------
-    static bool lastDisable = false;
-    static bool disabled = false;
+    static bool lastDisable = false; static bool disabled = false;
     bool disableCombo = IsActionActive("Disable");
     if (disableCombo && !lastDisable) {
         disabled = !disabled;
@@ -383,9 +304,26 @@ static void ProcessFrame() {
     lastDisable = disableCombo;
 
     if (disabled) return;
+
+    // ====================================================================
+    // FITUR BARU: KUSTOM TOMBOL KEYBOARD BEBAS
+    // ====================================================================
+    for (const auto& pair : g_customKeys) {
+        std::string btnName = pair.first;
+        int vkCode = pair.second;
+        bool isPressed = IsButtonPressed(btnName);
+        
+        static std::map<std::string, bool> lastCustomStates;
+        if (isPressed && !lastCustomStates[btnName]) {
+            KeyAction(vkCode, true);  // Tombol Ditekan
+        }
+        if (!isPressed && lastCustomStates[btnName]) {
+            KeyAction(vkCode, false); // Tombol Dilepas
+        }
+        lastCustomStates[btnName] = isPressed;
+    }
 }
 
-// -------------------- Entry --------------------
 int main(int argc, char** argv) {
     SetConsoleOutputCP(CP_UTF8);
     for (int i = 1; i < argc; i++) {
@@ -397,26 +335,8 @@ int main(int argc, char** argv) {
     printf("=====================================================\n");
 
     LoadConfig("config.ini");
+    if (!InitDirectInput()) { printf("Tekan Enter untuk keluar...\n"); getchar(); return 1; }
 
-    if (!InitDirectInput()) {
-        printf("Tekan Enter untuk keluar...\n");
-        getchar();
-        return 1;
-    }
-
-    printf("[i] Kontrol:\n");
-    printf("    L-Stick  : mouse move\n");
-    printf("    R-Stick  : scroll\n");
-    printf("    L1 / R1  : klik kiri / kanan\n");
-    printf("    Cross    : klik kiri\n");
-    printf("    Circle   : Enter\n");
-    printf("    Triangle : F24 (AutoHotkey OSK)\n");
-    printf("    Share    : Esc\n");
-    printf("    Options  : toggle console\n");
-    printf("    D-Pad    : arrow keys\n");
-    printf("    L2 / R2  : Space / Backspace\n");
-    printf("    L3+R3    : speed cycle\n");
-    printf("    Options+Share : disable/enable\n");
     printf("[i] Ctrl+C untuk keluar.\n");
 
     while (g_running) {
