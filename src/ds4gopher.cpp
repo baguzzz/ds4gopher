@@ -275,7 +275,8 @@ static void ProcessFrame() {
               (int)(ly * std::abs(ly) * speed));
 
     // ---------- Analog kanan -> scroll ----------
-    float ry = NormStick(g_js.lRY);
+    // PERBAIKAN: g_js.lRY diganti menjadi g_js.lRy (huruf y kecil)
+    float ry = NormStick(g_js.lRy);
     if (std::abs(ry) > 0.15f) {
         ScrollMouse((int)(ry * 120.0f));
     }
