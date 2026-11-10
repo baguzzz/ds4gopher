@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>DS4Gopher — Config Editor</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; }
+  h1 { color: #4fc3f7; margin: 0 0 4px; font-size: 24px; }
+  h2 { color: #81c784; font-size: 16px; margin: 20px 0 12px; }
+  .sub { color: #888; font-size: 13px; margin: 0 0 16px; }
+  .layout { display: grid; grid-template-columns: 1fr 1fr;
+    gap: 24px; max-width: 1400px; margin: auto; }
+  .panel { background: #1a1d24; border: 1px solid #2a2f3a;
+    border-radius: 12px; padding: 20px; }
+  .status { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;
+    font-size: 13px; background: #263238; color: #b0bec5; }
+  .status.connected { background: #1b5e20; color: #a5d6a7; }
+  .status.disconnected { background: #b71c1c; color: #ef9a9a; }
+  .action-row { display: grid; grid-template-columns: 1fr 1fr;
+    gap: 12px; align-items: center; padding: 8px 12px;
+    background: #0d1017; border-radius: 6px; margin-bottom: 6px; }
+  .action-name { font-size: 13px; color: #b0bec5; }
+  .action-val { padding: 8px 12px; background: #1a1d24;
+    border: 1px solid #2a2f3a; border-radius: 4px; color: #4fc3f7;
+    font-family: monospace; font-size: 13px; cursor: pointer;
+    user-select: none; text-align: center; transition: all 0.15s; }
+  .action-val:hover { border-color: #4fc3f7; }
+  .action-val.remapping { background: #ffb74d; color: #000;
+    border-color: #ffb74d; animation: pulse 1s infinite; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 #ffb74d88; }
+    50%      { box-shadow: 0 0 0 8px #ffb74d00; }
+  }
+  .setting { display: flex; justify-content: space-between;
+    align-items: center; padding: 10px 0;
+    border-bottom: 1px solid #2a2f3a; }
+  .setting:last-child { border-bottom: none; }
+  .setting label { font-size: 13px; color: #b0bec5; }
+  .setting input[type="number"] { width: 90px; padding: 6px 8px;
+    background: #0d1017; border: 1px solid #2a2f3a; border-radius: 4px;
+    color: #fff; font-family: monospace; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  button.act { padding: 10px 16px; background: #4fc3f7; color: #000;
+    border: none; border-radius: 6px; cursor: pointer;
+    font-weight: 600; font-size: 13px; }
+  button.act:hover { background: #81d4fa; }
+  button.act.secondary { background: #2a2f3a; color: #e6e6e6; }
+  button.act.secondary:hover { background: #3a4050; }
+  .preview { background: #0d1017; border-radius: 6px; padding: 12px;
+    font-family: monospace; font-size: 12px; color: #81c784;
+    max-height: 260px; overflow: auto; white-space: pre;
+    margin-top: 12px; }
+  .mono { font-family: monospace; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- LEFT: Remap -->
+  <div class="panel">
+    <h1>DS4Gopher Config Editor</h1>
+    <p class="sub">Remap tombol, lalu export <code>config.ini</code>.</p>
+
+    <div id="status" class="status disconnected">
+      Colok DS4 lalu tekan tombol apa saja di controller.
+    </div>
+
+    <h2>1. Remap Tombol</h2>
+    <p class="sub">Klik aksi → tekan tombol DS4 untuk ganti.</p>
+    <div id="actionList"></div>
+
+    <h2>2. Pengaturan Umum</h2>
+    <div class="setting">
+      <label>Deadzone analog (0-32767)</label>
+      <input type="number" id="deadzone" value="8000" min="0" max="20000">
+    </div>
+    <div class="setting">
+      <label>Speed Level 1 (lambat)</label>
+      <input type="number" id="speed1" value="6" min="1" max="100">
+    </div>
+    <div class="setting">
+      <label>Speed Level 2 (sedang)</label>
+      <input type="number" id="speed2" value="14" min="1" max="100">
+    </div>
+    <div class="setting">
+      <label>Speed Level 3 (cepat)</label>
+      <input type="number" id="speed3" value="28" min="1" max="100">
+    </div>
+    <div class="setting">
+      <label>Deadzone trigger L2/R2 (0-255)</label>
+      <input type="number" id="deadzoneTrigger" value="30" min="0" max="255">
+    </div>
+
+    <div class="toolbar">
+      <button class="act" onclick="exportIni()">⬇ Export config.ini</button>
+      <button class="act secondary" onclick="document.getElementById('fileInput').click()">⬆ Import</button>
+      <button class="act secondary" onclick="resetDefaults()">↺ Reset</button>
+      <input type="file" id="fileInput" accept=".ini" style="display:none" onchange="importIni(event)">
+    </div>
+
+    <div class="preview" id="preview"># Preview config.ini</div>
+  </div>
+
+  <!-- RIGHT: Monitor -->
+  <div class="panel">
+    <h2>Live Monitor</h2>
+    <div class="status" id="monitorInfo">Menunggu input...</div>
+
+    <h2>Stick Analog</h2>
+    <div class="setting"><label>Left X</label><span id="lx" class="mono">0.00</span></div>
+    <div class="setting"><label>Left Y</label><span id="ly" class="mono">0.00</span></div>
+    <div class="setting"><label>Right X</label><span id="rx" class="mono">0.00</span></div>
+    <div class="setting"><label>Right Y</label><span id="ry" class="mono">0.00</span></div>
+
+    <h2>Trigger</h2>
+    <div class="setting"><label>L2</label><span id="l2" class="mono">0.00</span></div>
+    <div class="setting"><label>R2</label><span id="r2" class="mono">0.00</span></div>
+
+    <h2>Tombol Aktif</h2>
+    <div id="activeButtons" class="mono" style="color:#4fc3f7; min-height:24px">
+      (tidak ada)
+    </div>
+
+    <h2>Info</h2>
+    <p class="sub" style="margin:0">
+      Editor ini pakai <b>Gamepad API</b> browser. <br>
+      Exe pakai <b>DirectInput</b> — bisa berbeda indeks.<br>
+      Kalau tombol salah, jalankan <code>ds4gopher.exe --debug</code>,
+      lihat nomor btn, ubah <code>[ButtonIndices]</code> di config.ini.
+    </p>
+  </div>
+
+</div>
+
+<script>
+const BTN_NAMES = [
+  'Cross','Circle','Square','Triangle',
+  'L1','R1','L2','R2',
+  'Share','Options','L3','R3','PS','Touchpad'
+];
+
+const DEFAULT_BTN_INDICES = {
+  Cross:1, Circle:2, Square:0, Triangle:3,
+  L1:4, R1:5, L2:6, R2:7,
+  Share:8, Options:9, L3:10, R3:11, PS:12, Touchpad:13
+};
+
+let mapping = {
+  MouseLeft:'L1', MouseRight:'R1', MouseMiddle:'L3',
+  Cross:'Cross', Circle:'Circle', Triangle:'Triangle', Square:'Square',
+  Share:'Share', Options:'Options', R3:'R3', L2:'L2', R2:'R2',
+  SpeedCycle:'L3+R3', Disable:'Options+Share'
+};
+
+let btnIndices = { ...DEFAULT_BTN_INDICES };
+let remappingAction = null;
+let currentGamepad = null;
+let lastPressed = {};
+
+const ACTION_LABELS = {
+  MouseLeft:    'Klik Kiri Mouse',
+  MouseRight:   'Klik Kanan Mouse',
+  MouseMiddle:  'Klik Tengah Mouse',
+  Cross:        'Cross → Klik Kiri',
+  Circle:       'Circle → Enter',
+  Triangle:     'Triangle → F24 (OSK)',
+  Square:       'Square → (kosong)',
+  Share:        'Share → Esc',
+  Options:      'Options → Toggle Console',
+  R3:           'R3 → F2',
+  L2:           'L2 → Space',
+  R2:           'R2 → Backspace',
+  SpeedCycle:   'Kombinasi Speed Cycle',
+  Disable:      'Kombinasi Disable/Enable'
+};
+
+function renderActions() {
+  const c = document.getElementById('actionList');
+  c.innerHTML = '';
+  for (const [action, btn] of Object.entries(mapping)) {
+    const row = document.createElement('div');
+    row.className = 'action-row';
+    row.innerHTML = `
+      <span class="action-name">${ACTION_LABELS[action] || action}</span>
+      <span class="action-val" data-action="${action}">${btn}</span>
+    `;
+    row.querySelector('.action-val').onclick = () => startRemap(action);
+    c.appendChild(row);
+  }
+  updatePreview();
+}
+
+function startRemap(action) {
+  remappingAction = action;
+  document.querySelectorAll('.action-val').forEach(el => {
+    el.classList.remove('remapping');
+    el.textContent = mapping[el.dataset.action];
+  });
+  const el = document.querySelector(`.action-val[data-action="${action}"]`);
+  if (el) {
+    el.classList.add('remapping');
+    el.textContent = 'tekan tombol...';
+  }
+}
+
+function pollGamepad() {
+  const gps = navigator.getGamepads ? navigator.getGamepads() : [];
+  currentGamepad = null;
+  for (const gp of gps) {
+    if (gp && gp.connected) { currentGamepad = gp; break; }
+  }
+
+  const status = document.getElementById('status');
+  if (!currentGamepad) {
+    status.textContent = 'Colok DS4 lalu tekan tombol apa saja.';
+    status.className = 'status disconnected';
+    requestAnimationFrame(pollGamepad);
+    return;
+  }
+  status.textContent = '✅ ' + currentGamepad.id;
+  status.className = 'status connected';
+
+  document.getElementById('lx').textContent = (currentGamepad.axes[0]||0).toFixed(2);
+  document.getElementById('ly').textContent = (currentGamepad.axes[1]||0).toFixed(2);
+  document.getElementById('rx').textContent = (currentGamepad.axes[2]||0).toFixed(2);
+  document.getElementById('ry').textContent = (currentGamepad.axes[3]||0).toFixed(2);
+
+  document.getElementById('l2').textContent =
+    (currentGamepad.buttons[6]?.value||0).toFixed(2);
+  document.getElementById('r2').textContent =
+    (currentGamepad.buttons[7]?.value||0).toFixed(2);
+
+  const active = [];
+  for (let i = 0; i < currentGamepad.buttons.length; i++) {
+    const b = currentGamepad.buttons[i];
+    const pressed = b.pressed || b.value > 0.5;
+    if (pressed) active.push(BTN_NAMES[i] || `btn${i}`);
+
+    if (pressed && !lastPressed[i] && remappingAction) {
+      // Kalau sedang remap, dan yang ditekan adalah tombol modifier kombinasi,
+      // tetap bisa dilakukan (nanti user bisa ketik manual di preview)
+      mapping[remappingAction] = BTN_NAMES[i] || `btn${i}`;
+      remappingAction = null;
+      renderActions();
+    }
+    lastPressed[i] = pressed;
+  }
+  document.getElementById('activeButtons').textContent =
+    active.length ? active.join(', ') : '(tidak ada)';
+
+  requestAnimationFrame(pollGamepad);
+}
+
+function buildIni() {
+  const lines = [];
+  lines.push('# DS4Gopher Configuration');
+  lines.push('# Generated by config-editor.html');
+  lines.push('');
+  lines.push('[General]');
+  lines.push(`Deadzone = ${document.getElementById('deadzone').value}`);
+  lines.push(`Speed1 = ${document.getElementById('speed1').value}`);
+  lines.push(`Speed2 = ${document.getElementById('speed2').value}`);
+  lines.push(`Speed3 = ${document.getElementById('speed3').value}`);
+  lines.push(`DeadzoneTrigger = ${document.getElementById('deadzoneTrigger').value}`);
+  lines.push('');
+  lines.push('[ButtonIndices]');
+  for (const [n, i] of Object.entries(btnIndices)) lines.push(`${n} = ${i}`);
+  lines.push('');
+  lines.push('[Actions]');
+  for (const [a, b] of Object.entries(mapping)) lines.push(`${a} = ${b}`);
+  return lines.join('\n') + '\n';
+}
+
+function updatePreview() {
+  document.getElementById('preview').textContent = buildIni();
+}
+
+function exportIni() {
+  const blob = new Blob([buildIni()], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'config.ini'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importIni(ev) {
+  const f = ev.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = (e) => {
+    let section = '';
+    for (const raw of e.target.result.split('\n')) {
+      let line = raw.split('#')[0].split(';')[0].trim();
+      if (!line) continue;
+      if (line.startsWith('[') && line.endsWith(']')) {
+        section = line.slice(1, -1); continue;
+      }
+      const eq = line.indexOf('=');
+      if (eq < 0) continue;
+      const k = line.slice(0, eq).trim();
+      const v = line.slice(eq + 1).trim();
+      if (section === 'Actions') mapping[k] = v;
+      else if (section === 'ButtonIndices') btnIndices[k] = parseInt(v) || 0;
+      else if (section === 'General') {
+        const map = {
+          Deadzone:'deadzone', Speed1:'speed1', Speed2:'speed2',
+          Speed3:'speed3', DeadzoneTrigger:'deadzoneTrigger'
+        };
+        const el = document.getElementById(map[k]);
+        if (el) el.value = v;
+      }
+    }
+    renderActions();
+  };
+  r.readAsText(f);
+  ev.target.value = '';
+}
+
+function resetDefaults() {
+  mapping = {
+    MouseLeft:'L1', MouseRight:'R1', MouseMiddle:'L3',
+    Cross:'Cross', Circle:'Circle', Triangle:'Triangle', Square:'Square',
+    Share:'Share', Options:'Options', R3:'R3', L2:'L2', R2:'R2',
+    SpeedCycle:'L3+R3', Disable:'Options+Share'
+  };
+  btnIndices = { ...DEFAULT_BTN_INDICES };
+  document.getElementById('deadzone').value = 8000;
+  document.getElementById('speed1').value = 6;
+  document.getElementById('speed2').value = 14;
+  document.getElementById('speed3').value = 28;
+  document.getElementById('deadzoneTrigger').value = 30;
+  renderActions();
+}
+
+window.addEventListener('gamepadconnected', () => pollGamepad());
+renderActions();
+pollGamepad();
+['deadzone','speed1','speed2','speed3','deadzoneTrigger'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updatePreview);
+});
+</script>
+</body>
+</html>
