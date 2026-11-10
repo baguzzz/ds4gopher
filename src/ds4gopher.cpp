@@ -114,7 +114,6 @@ static int BtnOf(const std::string& action) {
     return bit->second;
 }
 
-// Support kombinasi seperti "L3+R3" → semua harus ditekan
 static bool IsCombo(const std::string& action) {
     auto it = g_actions.find(action);
     if (it == g_actions.end()) return false;
@@ -130,7 +129,6 @@ static bool IsCombo(const std::string& action) {
 }
 
 static bool IsActionActive(const std::string& action) {
-    // Cek dulu apakah action berisi kombinasi "+"
     auto it = g_actions.find(action);
     if (it == g_actions.end()) return false;
     if (it->second.find('+') != std::string::npos) {
@@ -216,6 +214,26 @@ static bool InitDirectInput() {
         printf("[X] SetCooperativeLevel gagal (jalankan sebagai Admin).\n");
         return false;
     }
+
+    // ====================================================================
+    // PERBAIKAN BUG: Paksa semua sumbu analog menggunakan standar -32768 sd 32767
+    // Mencegah mouse meluncur sendiri ke pojok kanan bawah.
+    // ====================================================================
+    DIPROPRANGE range;
+    range.diph.dwSize = sizeof(DIPROPRANGE);
+    range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+    range.diph.dwHow = DIPH_BYOFFSET;
+    range.lMin = -32768;
+    range.lMax = 32767;
+
+    range.diph.dwObj = DIJOFS_X;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
+    range.diph.dwObj = DIJOFS_Y;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
+    range.diph.dwObj = DIJOFS_Z;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
+    range.diph.dwObj = DIJOFS_RX; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
+    range.diph.dwObj = DIJOFS_RY; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
+    range.diph.dwObj = DIJOFS_RZ; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
+    // ====================================================================
+
     g_pDev->Acquire();
     printf("[+] DS4 terdeteksi via DirectInput.\n");
     return true;
@@ -257,7 +275,7 @@ static void ProcessFrame() {
               (int)(ly * std::abs(ly) * speed));
 
     // ---------- Analog kanan -> scroll ----------
-    float ry = NormStick(g_js.lRy);
+    float ry = NormStick(g_js.lRY);
     if (std::abs(ry) > 0.15f) {
         ScrollMouse((int)(ry * 120.0f));
     }
