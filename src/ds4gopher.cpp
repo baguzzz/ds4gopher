@@ -1,7 +1,5 @@
 // =====================================================================
 //  DS4Gopher - Gopher360-style utility untuk DualShock 4 via DirectInput
-//  Build: cl /EHsc /std:c++17 /O2 /MT ds4gopher.cpp
-//         /link dinput8.lib dxguid.lib user32.lib
 // =====================================================================
 #define DIRECTINPUT_VERSION 0x0800
 #include <windows.h>
@@ -29,7 +27,9 @@ static bool                  g_debug         = false;
 static int                   g_speedIdx      = 1;
 static int                   g_speeds[3]     = { 6, 14, 28 };
 static int                   g_deadzone      = 8000;
-static int                   g_deadzoneTrig  = 30;
+
+// Variabel untuk Kalibrasi Titik Netral
+static LONG neutralLX = 0, neutralLY = 0, neutralRX = 0, neutralRY = 0;
 
 // -------------------- Config Maps --------------------
 static std::map<std::string, int> g_btnIdx = {
@@ -100,7 +100,6 @@ static void LoadConfig(const char* path) {
             else if (key == "Speed1")          { try { g_speeds[0] = std::stoi(val); } catch (...) {} }
             else if (key == "Speed2")          { try { g_speeds[1] = std::stoi(val); } catch (...) {} }
             else if (key == "Speed3")          { try { g_speeds[2] = std::stoi(val); } catch (...) {} }
-            else if (key == "DeadzoneTrigger") { try { g_deadzoneTrig = std::stoi(val); } catch (...) {} }
         }
     }
     printf("[+] Config loaded.\n");
@@ -215,10 +214,7 @@ static bool InitDirectInput() {
         return false;
     }
 
-    // ====================================================================
-    // PERBAIKAN BUG: Paksa semua sumbu analog menggunakan standar -32768 sd 32767
-    // Mencegah mouse meluncur sendiri ke pojok kanan bawah.
-    // ====================================================================
+    // Paksa semua sumbu analog menggunakan standar -32768 sd 32767
     DIPROPRANGE range;
     range.diph.dwSize = sizeof(DIPROPRANGE);
     range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
@@ -228,14 +224,26 @@ static bool InitDirectInput() {
 
     range.diph.dwObj = DIJOFS_X;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
     range.diph.dwObj = DIJOFS_Y;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
-    range.diph.dwObj = DIJOFS_Z;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
     range.diph.dwObj = DIJOFS_RX; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
     range.diph.dwObj = DIJOFS_RY; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
-    range.diph.dwObj = DIJOFS_RZ; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
-    // ====================================================================
 
     g_pDev->Acquire();
-    printf("[+] DS4 terdeteksi via DirectInput.\n");
+
+    // ====================================================================
+    // KALIBRASI OTOMATIS: Baca posisi awal (titik netral) stik analog
+    // Mencegah mouse bergerak/scroll sendiri saat aplikasi baru dibuka
+    // ====================================================================
+    Sleep(50); // Beri waktu driver untuk siap
+    g_pDev->Poll();
+    if (SUCCEEDED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) {
+        neutralLX = g_js.lX;
+        neutralLY = g_js.lY;
+        neutralRX = g_js.lRx;
+        neutralRY = g_js.lRy;
+    }
+    // ====================================================================
+
+    printf("[+] DS4 terdeteksi dan dikalibrasi.\n");
     return true;
 }
 
@@ -243,9 +251,15 @@ static bool InitDirectInput() {
 static void ToggleConsole() {
     HWND h = GetConsoleWindow();
     if (!h) return;
-    if (g_consoleHidden) { ShowWindow(h, SW_SHOW); SetForegroundWindow(h); }
-    else                 { ShowWindow(h, SW_HIDE); }
-    g_consoleHidden = !g_consoleHidden;
+    if (g_consoleHidden) { 
+        ShowWindow(h, SW_SHOW); 
+        SetForegroundWindow(h); 
+        g_consoleHidden = false;
+    }
+    else { 
+        ShowWindow(h, SW_HIDE); 
+        g_consoleHidden = true;
+    }
 }
 
 // -------------------- Main Loop --------------------
@@ -255,29 +269,29 @@ static void ProcessFrame() {
         g_pDev->Acquire(); return;
     }
 
-    // Debug mode
-    if (g_debug) {
-        bool any = false;
-        for (int i = 0; i < 14; i++) {
-            if (g_js.rgbButtons[i] & 0x80) {
-                printf("[DBG] btn %d aktif\n", i);
-                any = true;
-            }
-        }
-        if (any) printf("---\n");
+    bool isConsoleFocused = (GetForegroundWindow() == GetConsoleWindow());
+
+    // ---------- Options: toggle console ----------
+    static bool lastHide = false;
+    bool curHide = IsActionActive("Options");
+    if (curHide && !lastHide) ToggleConsole();
+    lastHide = curHide;
+
+    // ---------- ANTI-KETIKAN TERMINAL ----------
+    if (isConsoleFocused && !g_consoleHidden) {
+        return; 
     }
 
-    // ---------- Analog kiri -> mouse ----------
-    float lx = NormStick(g_js.lX);
-    float ly = NormStick(g_js.lY);
+    // ---------- Analog kiri -> mouse (dikurangi nilai netral) ----------
+    float lx = NormStick(g_js.lX - neutralLX);
+    float ly = NormStick(g_js.lY - neutralLY);
     int speed = g_speeds[g_speedIdx];
     MoveMouse((int)(lx * std::abs(lx) * speed),
               (int)(ly * std::abs(ly) * speed));
 
-    // ---------- Analog kanan -> scroll ----------
-    // PERBAIKAN: g_js.lRY diganti menjadi g_js.lRy (huruf y kecil)
-    float ry = NormStick(g_js.lRy);
-    if (std::abs(ry) > 0.15f) {
+    // ---------- Analog kanan -> scroll (dikurangi nilai netral) ----------
+    float ry = NormStick(g_js.lRy - neutralRY);
+    if (std::abs(ry) > 0.2f) { // Threshold 0.2 agar lebih aman
         ScrollMouse((int)(ry * 120.0f));
     }
 
@@ -319,17 +333,11 @@ static void ProcessFrame() {
     if (curF2 != lastF2) KeyAction(VK_F2, curF2);
     lastF2 = curF2;
 
-    // ---------- Triangle: F24 (untuk AHK OSK) ----------
+    // ---------- Triangle: F24 ----------
     static bool lastVk = false;
     bool curVk = IsActionActive("Triangle");
     if (curVk != lastVk) KeyAction(VK_F24, curVk);
     lastVk = curVk;
-
-    // ---------- Options: toggle console ----------
-    static bool lastHide = false;
-    bool curHide = IsActionActive("Options");
-    if (curHide && !lastHide) ToggleConsole();
-    lastHide = curHide;
 
     // ---------- D-Pad: arrow keys ----------
     DWORD pov = g_js.rgdwPOV[0];
@@ -346,16 +354,10 @@ static void ProcessFrame() {
     if (lf != lfD) { KeyAction(VK_LEFT,  lf); lfD = lf; }
     if (rt != rtD) { KeyAction(VK_RIGHT, rt); rtD = rt; }
 
-    // ---------- L2 / R2 analog ----------
-    auto trig = [](LONG raw) -> int {
-        int v = (int)((raw + 32768) / 256);
-        return v < 0 ? 0 : (v > 255 ? 255 : v);
-    };
-    int l2v = trig(g_js.lZ);
-    int r2v = trig(g_js.lRz);
-    bool l2On = l2v > g_deadzoneTrig;
-    bool r2On = r2v > g_deadzoneTrig;
+    // ---------- L2 / R2 (Menggunakan Button Mapping) ----------
     static bool lastL2 = false, lastR2 = false;
+    bool l2On = IsActionActive("L2");
+    bool r2On = IsActionActive("R2");
     if (l2On != lastL2) KeyAction(VK_SPACE, l2On);
     if (r2On != lastR2) KeyAction(VK_BACK, r2On);
     lastL2 = l2On; lastR2 = r2On;
