@@ -28,6 +28,7 @@ static int                   g_speedIdx      = 1;
 static int                   g_speeds[3]     = { 6, 14, 28 };
 static int                   g_deadzone      = 8000;
 
+// Variabel untuk Kalibrasi Titik Netral (Anti-Drift)
 static LONG neutralLX = 0, neutralLY = 0, neutralRX = 0, neutralRY = 0;
 
 // -------------------- Config Maps --------------------
@@ -39,11 +40,20 @@ static std::map<std::string, int> g_btnIdx = {
 };
 
 static std::map<std::string, std::string> g_actions = {
-    {"MouseLeft",   "L1"}, {"MouseRight",  "R1"}, {"MouseMiddle", "L3"},
-    {"Cross",       "Cross"}, {"Circle",    "Circle"}, {"Triangle", "Triangle"},
-    {"Square",      "Square"}, {"Share",    "Share"}, {"Options", "Options"},
-    {"R3",          "R3"}, {"L2", "L2"}, {"R2", "R2"},
-    {"SpeedCycle",  "L3+R3"}, {"Disable", "Options+Share"}
+    {"MouseLeft",   "L1"},
+    {"MouseRight",  "R1"},
+    {"MouseMiddle", "L3"},
+    {"Cross",       "Cross"},
+    {"Circle",      "Circle"},
+    {"Triangle",    "Triangle"},
+    {"Square",      "Square"},
+    {"Share",       "Share"},
+    {"Options",     "Options"},
+    {"R3",          "R3"},
+    {"L2",          "L2"},
+    {"R2",          "R2"},
+    {"SpeedCycle",  "L3+R3"},
+    {"Disable",     "Options+Share"}
 };
 
 // Map untuk Custom Keyboard Keys
@@ -89,7 +99,6 @@ static void LoadConfig(const char* path) {
         } else if (section == "Actions") {
             g_actions[key] = val;
         } else if (section == "CustomKeys") {
-            // Membaca hex atau desimal (misal: 0x41 atau 65)
             try { g_customKeys[key] = std::stoi(val, nullptr, 0); } catch (...) {}
         } else if (section == "General") {
             if      (key == "Deadzone")        { try { g_deadzone = std::stoi(val); } catch (...) {} }
@@ -195,6 +204,7 @@ static bool InitDirectInput() {
     if (FAILED(g_pDev->SetDataFormat(&c_dfDIJoystick2))) return false;
     if (FAILED(g_pDev->SetCooperativeLevel(GetConsoleWindow(), DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) return false;
 
+    // Paksa rentang axis standar -32768 sd 32767
     DIPROPRANGE range;
     range.diph.dwSize = sizeof(DIPROPRANGE);
     range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
@@ -207,7 +217,9 @@ static bool InitDirectInput() {
     range.diph.dwObj = DIJOFS_RY; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
 
     g_pDev->Acquire();
-    Sleep(50);
+
+    // KALIBRASI OTOMATIS (Mencegah mouse/scroll bergerak sendiri)
+    Sleep(50); 
     g_pDev->Poll();
     if (SUCCEEDED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) {
         neutralLX = g_js.lX; neutralLY = g_js.lY;
@@ -237,15 +249,26 @@ static void ProcessFrame() {
 
     if (isConsoleFocused && !g_consoleHidden) return;
 
-    float lx = NormStick(g_js.lX - neutralLX);
-    float ly = NormStick(g_js.lY - neutralLY);
-    int speed = g_speeds[g_speedIdx];
-    MoveMouse((int)(lx * std::abs(lx) * speed), (int)(ly * std::abs(ly) * speed));
-
+    // ====================================================================
+    // PENGATURAN ANALOG DI SINI
+    // Analog Kanan -> Mouse (Gerak Kursor)
+    // Analog Kiri  -> Scroll (Gulir Halaman)
+    // ====================================================================
+    
+    // ---------- Analog kanan -> mouse ----------
+    float rx = NormStick(g_js.lRx - neutralRX);
     float ry = NormStick(g_js.lRy - neutralRY);
-    if (std::abs(ry) > 0.2f) ScrollMouse((int)(ry * 120.0f));
+    int speed = g_speeds[g_speedIdx];
+    MoveMouse((int)(rx * std::abs(rx) * speed), (int)(ry * std::abs(ry) * speed));
 
-    // --- Aksi Bawaan ---
+    // ---------- Analog kiri -> scroll ----------
+    float ly = NormStick(g_js.lY - neutralLY);
+    if (std::abs(ly) > 0.2f) {
+        ScrollMouse((int)(ly * 120.0f)); // Ubah 120.0f untuk mengatur kecepatan scroll
+    }
+    // ====================================================================
+
+    // --- Aksi Tombol Bawaan ---
     static bool lastL = false, lastR = false, lastM = false;
     bool curL = IsActionActive("MouseLeft"); bool curR = IsActionActive("MouseRight"); bool curM = IsActionActive("MouseMiddle");
     if (curL && !lastL) MouseClick(MOUSEEVENTF_LEFTDOWN); if (!curL && lastL) MouseClick(MOUSEEVENTF_LEFTUP);
@@ -274,6 +297,7 @@ static void ProcessFrame() {
     if (l2On != lastL2) KeyAction(VK_SPACE, l2On); if (r2On != lastR2) KeyAction(VK_BACK, r2On);
     lastL2 = l2On; lastR2 = r2On;
 
+    // --- Aksi D-Pad ---
     DWORD pov = g_js.rgdwPOV[0];
     static bool upD=false,dnD=false,lfD=false,rtD=false;
     bool up=false,dn=false,lf=false,rt=false;
@@ -288,6 +312,7 @@ static void ProcessFrame() {
     if (lf != lfD) { KeyAction(VK_LEFT, lf); lfD = lf; }
     if (rt != rtD) { KeyAction(VK_RIGHT, rt); rtD = rt; }
 
+    // --- Aksi Speed Cycle ---
     static bool lastSpeedCombo = false; bool speedCombo = IsActionActive("SpeedCycle");
     if (speedCombo && !lastSpeedCombo) {
         g_speedIdx = (g_speedIdx + 1) % 3;
@@ -295,6 +320,7 @@ static void ProcessFrame() {
     }
     lastSpeedCombo = speedCombo;
 
+    // --- Aksi Disable ---
     static bool lastDisable = false; static bool disabled = false;
     bool disableCombo = IsActionActive("Disable");
     if (disableCombo && !lastDisable) {
@@ -305,9 +331,7 @@ static void ProcessFrame() {
 
     if (disabled) return;
 
-    // ====================================================================
-    // FITUR BARU: KUSTOM TOMBOL KEYBOARD BEBAS
-    // ====================================================================
+    // --- CUSTOM KEYS (Keyboard Bebas) ---
     for (const auto& pair : g_customKeys) {
         std::string btnName = pair.first;
         int vkCode = pair.second;
@@ -315,15 +339,16 @@ static void ProcessFrame() {
         
         static std::map<std::string, bool> lastCustomStates;
         if (isPressed && !lastCustomStates[btnName]) {
-            KeyAction(vkCode, true);  // Tombol Ditekan
+            KeyAction(vkCode, true);  
         }
         if (!isPressed && lastCustomStates[btnName]) {
-            KeyAction(vkCode, false); // Tombol Dilepas
+            KeyAction(vkCode, false); 
         }
         lastCustomStates[btnName] = isPressed;
     }
 }
 
+// -------------------- Entry --------------------
 int main(int argc, char** argv) {
     SetConsoleOutputCP(CP_UTF8);
     for (int i = 1; i < argc; i++) {
@@ -337,6 +362,11 @@ int main(int argc, char** argv) {
     LoadConfig("config.ini");
     if (!InitDirectInput()) { printf("Tekan Enter untuk keluar...\n"); getchar(); return 1; }
 
+    printf("[i] Kontrol:\n");
+    printf("    Analog Kanan : mouse move\n");
+    printf("    Analog Kiri  : scroll\n");
+    printf("    L3+R3        : speed cycle\n");
+    printf("    Options      : toggle console\n");
     printf("[i] Ctrl+C untuk keluar.\n");
 
     while (g_running) {
