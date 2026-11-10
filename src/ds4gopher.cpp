@@ -28,8 +28,13 @@ static int                   g_speedIdx      = 1;
 static int                   g_speeds[3]     = { 6, 14, 28 };
 static int                   g_deadzone      = 8000;
 
-static LONG neutralLX = 0, neutralLY = 0, neutralRX = 0, neutralRY = 0;
-static bool g_useZForRightStick = false; // Deteksi tipe sumbu stik kanan
+// Neutral points
+static LONG neutralLX = 0, neutralLY = 0;
+static LONG neutralRX = 0, neutralRY = 0; // Untuk Rx/Ry
+static LONG neutralRZx = 0, neutralRZy = 0; // Untuk Z/Rz
+
+// Konfigurasi Sumbu Stik Kanan (Default: RX_RY untuk DS4)
+static std::string g_rightStickAxis = "RX_RY";
 
 // -------------------- Config Maps --------------------
 static std::map<std::string, int> g_btnIdx = {
@@ -92,7 +97,8 @@ static void LoadConfig(const char* path) {
         } else if (section == "CustomKeys") {
             try { g_customKeys[key] = std::stoi(val, nullptr, 0); } catch (...) {}
         } else if (section == "Analog") {
-            g_analogFuncs[key] = val;
+            if (key == "RightStickAxis") g_rightStickAxis = val;
+            else g_analogFuncs[key] = val;
         } else if (section == "General") {
             if      (key == "Deadzone")        { try { g_deadzone = std::stoi(val); } catch (...) {} }
             else if (key == "Speed1")          { try { g_speeds[0] = std::stoi(val); } catch (...) {} }
@@ -215,17 +221,8 @@ static bool InitDirectInput() {
     
     if (SUCCEEDED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) {
         neutralLX = g_js.lX; neutralLY = g_js.lY;
-        
-        // Deteksi cerdas: Jika Rx dan Ry kosong, berarti pakai Z dan Rz
-        if (std::abs(g_js.lRx) < 1000 && std::abs(g_js.lRy) < 1000) {
-            g_useZForRightStick = true;
-            neutralRX = g_js.lZ; 
-            neutralRY = g_js.lRz;
-        } else {
-            g_useZForRightStick = false;
-            neutralRX = g_js.lRx; 
-            neutralRY = g_js.lRy;
-        }
+        neutralRX = g_js.lRx; neutralRY = g_js.lRy;
+        neutralRZx = g_js.lZ; neutralRZy = g_js.lRz;
     }
     return true;
 }
@@ -242,6 +239,14 @@ static void ProcessFrame() {
     if (FAILED(g_pDev->Poll())) { g_pDev->Acquire(); return; }
     if (FAILED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) { g_pDev->Acquire(); return; }
 
+    // ====================================================================
+    // MODE DEBUG: Cetak semua nilai sumbu
+    // ====================================================================
+    if (g_debug) {
+        printf("DEBUG: LX=%6d LY=%6d | RX=%6d RY=%6d | Z=%6d RZ=%6d\n",
+            g_js.lX, g_js.lY, g_js.lRx, g_js.lRy, g_js.lZ, g_js.lRz);
+    }
+
     bool isConsoleFocused = (GetForegroundWindow() == GetConsoleWindow());
 
     static bool lastHide = false;
@@ -252,16 +257,20 @@ static void ProcessFrame() {
     if (isConsoleFocused && !g_consoleHidden) return;
 
     // ====================================================================
-    // LOGIKA ANALOG DINAMIS
+    // LOGIKA ANALOG
     // ====================================================================
     float lx = NormStick(g_js.lX - neutralLX);
     float ly = NormStick(g_js.lY - neutralLY);
     
-    // Baca stik kanan berdasarkan deteksi awal (Anti-Stutter)
-    float rawRx = g_useZForRightStick ? g_js.lZ : g_js.lRx;
-    float rawRy = g_useZForRightStick ? g_js.lRz : g_js.lRy;
-    float rx = NormStick(rawRx - neutralRX);
-    float ry = NormStick(rawRy - neutralRY);
+    float rx, ry;
+    if (g_rightStickAxis == "Z_RZ") {
+        rx = NormStick(g_js.lZ - neutralRZx);
+        ry = NormStick(g_js.lRz - neutralRZy);
+    } else {
+        // Default: RX_RY (paling umum untuk DS4)
+        rx = NormStick(g_js.lRx - neutralRX);
+        ry = NormStick(g_js.lRy - neutralRY);
+    }
 
     int speed = g_speeds[g_speedIdx];
 
@@ -369,11 +378,9 @@ int main(int argc, char** argv) {
     LoadConfig("config.ini");
     if (!InitDirectInput()) { printf("Tekan Enter untuk keluar...\n"); getchar(); return 1; }
 
-    printf("[i] Kontrol:\n");
+    printf("[i] Sumbu Stik Kanan : %s\n", g_rightStickAxis.c_str());
     printf("    L-Stick : %s\n", g_analogFuncs["LeftStick"].c_str());
     printf("    R-Stick : %s\n", g_analogFuncs["RightStick"].c_str());
-    printf("    L3+R3   : speed cycle\n");
-    printf("    Options : toggle console\n");
     printf("[i] Ctrl+C untuk keluar.\n");
 
     while (g_running) {
