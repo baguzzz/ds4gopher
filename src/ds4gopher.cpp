@@ -28,8 +28,8 @@ static int                   g_speedIdx      = 1;
 static int                   g_speeds[3]     = { 6, 14, 28 };
 static int                   g_deadzone      = 8000;
 
-// Variabel untuk Kalibrasi Titik Netral (Anti-Drift)
 static LONG neutralLX = 0, neutralLY = 0, neutralRX = 0, neutralRY = 0;
+static bool g_useZForRightStick = false; // Deteksi tipe sumbu stik kanan
 
 // -------------------- Config Maps --------------------
 static std::map<std::string, int> g_btnIdx = {
@@ -40,24 +40,19 @@ static std::map<std::string, int> g_btnIdx = {
 };
 
 static std::map<std::string, std::string> g_actions = {
-    {"MouseLeft",   "L1"},
-    {"MouseRight",  "R1"},
-    {"MouseMiddle", "L3"},
-    {"Cross",       "Cross"},
-    {"Circle",      "Circle"},
-    {"Triangle",    "Triangle"},
-    {"Square",      "Square"},
-    {"Share",       "Share"},
-    {"Options",     "Options"},
-    {"R3",          "R3"},
-    {"L2",          "L2"},
-    {"R2",          "R2"},
-    {"SpeedCycle",  "L3+R3"},
-    {"Disable",     "Options+Share"}
+    {"MouseLeft",   "L1"}, {"MouseRight",  "R1"}, {"MouseMiddle", "L3"},
+    {"Cross",       "Cross"}, {"Circle",    "Circle"}, {"Triangle", "Triangle"},
+    {"Square",      "Square"}, {"Share",    "Share"}, {"Options", "Options"},
+    {"R3",          "R3"}, {"L2", "L2"}, {"R2", "R2"},
+    {"SpeedCycle",  "L3+R3"}, {"Disable", "Options+Share"}
 };
 
-// Map untuk Custom Keyboard Keys
 static std::map<std::string, int> g_customKeys;
+
+static std::map<std::string, std::string> g_analogFuncs = {
+    {"LeftStick", "Mouse"},
+    {"RightStick", "Scroll"}
+};
 
 // -------------------- Helper --------------------
 static std::string Trim(const std::string& s) {
@@ -69,11 +64,7 @@ static std::string Trim(const std::string& s) {
 
 static void LoadConfig(const char* path) {
     std::ifstream f(path);
-    if (!f) {
-        printf("[i] config.ini tidak ditemukan, pakai default.\n");
-        return;
-    }
-    printf("[i] Membaca %s\n", path);
+    if (!f) return;
 
     std::string line, section;
     while (std::getline(f, line)) {
@@ -100,6 +91,8 @@ static void LoadConfig(const char* path) {
             g_actions[key] = val;
         } else if (section == "CustomKeys") {
             try { g_customKeys[key] = std::stoi(val, nullptr, 0); } catch (...) {}
+        } else if (section == "Analog") {
+            g_analogFuncs[key] = val;
         } else if (section == "General") {
             if      (key == "Deadzone")        { try { g_deadzone = std::stoi(val); } catch (...) {} }
             else if (key == "Speed1")          { try { g_speeds[0] = std::stoi(val); } catch (...) {} }
@@ -107,7 +100,6 @@ static void LoadConfig(const char* path) {
             else if (key == "Speed3")          { try { g_speeds[2] = std::stoi(val); } catch (...) {} }
         }
     }
-    printf("[+] Config loaded.\n");
 }
 
 static int BtnOf(const std::string& action) {
@@ -204,7 +196,6 @@ static bool InitDirectInput() {
     if (FAILED(g_pDev->SetDataFormat(&c_dfDIJoystick2))) return false;
     if (FAILED(g_pDev->SetCooperativeLevel(GetConsoleWindow(), DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) return false;
 
-    // Paksa rentang axis standar -32768 sd 32767
     DIPROPRANGE range;
     range.diph.dwSize = sizeof(DIPROPRANGE);
     range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
@@ -215,15 +206,26 @@ static bool InitDirectInput() {
     range.diph.dwObj = DIJOFS_Y;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
     range.diph.dwObj = DIJOFS_RX; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
     range.diph.dwObj = DIJOFS_RY; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
+    range.diph.dwObj = DIJOFS_Z;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
+    range.diph.dwObj = DIJOFS_RZ; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
 
     g_pDev->Acquire();
-
-    // KALIBRASI OTOMATIS (Mencegah mouse/scroll bergerak sendiri)
-    Sleep(50); 
+    Sleep(50);
     g_pDev->Poll();
+    
     if (SUCCEEDED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) {
         neutralLX = g_js.lX; neutralLY = g_js.lY;
-        neutralRX = g_js.lRx; neutralRY = g_js.lRy;
+        
+        // Deteksi cerdas: Jika Rx dan Ry kosong, berarti pakai Z dan Rz
+        if (std::abs(g_js.lRx) < 1000 && std::abs(g_js.lRy) < 1000) {
+            g_useZForRightStick = true;
+            neutralRX = g_js.lZ; 
+            neutralRY = g_js.lRz;
+        } else {
+            g_useZForRightStick = false;
+            neutralRX = g_js.lRx; 
+            neutralRY = g_js.lRy;
+        }
     }
     return true;
 }
@@ -250,21 +252,33 @@ static void ProcessFrame() {
     if (isConsoleFocused && !g_consoleHidden) return;
 
     // ====================================================================
-    // PENGATURAN ANALOG DI SINI
-    // Analog Kanan -> Mouse (Gerak Kursor)
-    // Analog Kiri  -> Scroll (Gulir Halaman)
+    // LOGIKA ANALOG DINAMIS
     // ====================================================================
-    
-    // ---------- Analog kanan -> mouse ----------
-    float rx = NormStick(g_js.lRx - neutralRX);
-    float ry = NormStick(g_js.lRy - neutralRY);
-    int speed = g_speeds[g_speedIdx];
-    MoveMouse((int)(rx * std::abs(rx) * speed), (int)(ry * std::abs(ry) * speed));
-
-    // ---------- Analog kiri -> scroll ----------
+    float lx = NormStick(g_js.lX - neutralLX);
     float ly = NormStick(g_js.lY - neutralLY);
-    if (std::abs(ly) > 0.2f) {
-        ScrollMouse((int)(ly * 120.0f)); // Ubah 120.0f untuk mengatur kecepatan scroll
+    
+    // Baca stik kanan berdasarkan deteksi awal (Anti-Stutter)
+    float rawRx = g_useZForRightStick ? g_js.lZ : g_js.lRx;
+    float rawRy = g_useZForRightStick ? g_js.lRz : g_js.lRy;
+    float rx = NormStick(rawRx - neutralRX);
+    float ry = NormStick(rawRy - neutralRY);
+
+    int speed = g_speeds[g_speedIdx];
+
+    // Eksekusi Stik Kiri
+    std::string leftFunc = g_analogFuncs["LeftStick"];
+    if (leftFunc == "Mouse") {
+        MoveMouse((int)(lx * std::abs(lx) * speed), (int)(ly * std::abs(ly) * speed));
+    } else if (leftFunc == "Scroll") {
+        if (std::abs(ly) > 0.2f) ScrollMouse((int)(ly * 120.0f));
+    }
+
+    // Eksekusi Stik Kanan
+    std::string rightFunc = g_analogFuncs["RightStick"];
+    if (rightFunc == "Mouse") {
+        MoveMouse((int)(rx * std::abs(rx) * speed), (int)(ry * std::abs(ry) * speed));
+    } else if (rightFunc == "Scroll") {
+        if (std::abs(ry) > 0.2f) ScrollMouse((int)(ry * 120.0f));
     }
     // ====================================================================
 
@@ -297,7 +311,6 @@ static void ProcessFrame() {
     if (l2On != lastL2) KeyAction(VK_SPACE, l2On); if (r2On != lastR2) KeyAction(VK_BACK, r2On);
     lastL2 = l2On; lastR2 = r2On;
 
-    // --- Aksi D-Pad ---
     DWORD pov = g_js.rgdwPOV[0];
     static bool upD=false,dnD=false,lfD=false,rtD=false;
     bool up=false,dn=false,lf=false,rt=false;
@@ -312,7 +325,6 @@ static void ProcessFrame() {
     if (lf != lfD) { KeyAction(VK_LEFT, lf); lfD = lf; }
     if (rt != rtD) { KeyAction(VK_RIGHT, rt); rtD = rt; }
 
-    // --- Aksi Speed Cycle ---
     static bool lastSpeedCombo = false; bool speedCombo = IsActionActive("SpeedCycle");
     if (speedCombo && !lastSpeedCombo) {
         g_speedIdx = (g_speedIdx + 1) % 3;
@@ -320,7 +332,6 @@ static void ProcessFrame() {
     }
     lastSpeedCombo = speedCombo;
 
-    // --- Aksi Disable ---
     static bool lastDisable = false; static bool disabled = false;
     bool disableCombo = IsActionActive("Disable");
     if (disableCombo && !lastDisable) {
@@ -331,19 +342,15 @@ static void ProcessFrame() {
 
     if (disabled) return;
 
-    // --- CUSTOM KEYS (Keyboard Bebas) ---
+    // --- CUSTOM KEYS ---
     for (const auto& pair : g_customKeys) {
         std::string btnName = pair.first;
         int vkCode = pair.second;
         bool isPressed = IsButtonPressed(btnName);
         
         static std::map<std::string, bool> lastCustomStates;
-        if (isPressed && !lastCustomStates[btnName]) {
-            KeyAction(vkCode, true);  
-        }
-        if (!isPressed && lastCustomStates[btnName]) {
-            KeyAction(vkCode, false); 
-        }
+        if (isPressed && !lastCustomStates[btnName]) KeyAction(vkCode, true);  
+        if (!isPressed && lastCustomStates[btnName]) KeyAction(vkCode, false); 
         lastCustomStates[btnName] = isPressed;
     }
 }
@@ -363,10 +370,10 @@ int main(int argc, char** argv) {
     if (!InitDirectInput()) { printf("Tekan Enter untuk keluar...\n"); getchar(); return 1; }
 
     printf("[i] Kontrol:\n");
-    printf("    Analog Kanan : mouse move\n");
-    printf("    Analog Kiri  : scroll\n");
-    printf("    L3+R3        : speed cycle\n");
-    printf("    Options      : toggle console\n");
+    printf("    L-Stick : %s\n", g_analogFuncs["LeftStick"].c_str());
+    printf("    R-Stick : %s\n", g_analogFuncs["RightStick"].c_str());
+    printf("    L3+R3   : speed cycle\n");
+    printf("    Options : toggle console\n");
     printf("[i] Ctrl+C untuk keluar.\n");
 
     while (g_running) {
