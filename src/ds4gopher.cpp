@@ -29,28 +29,25 @@ static int                   g_speedIdx      = 1;
 static int                   g_speeds[3]     = { 6, 14, 28 };
 static int                   g_deadzone      = 8000;
 
-static LONG neutralLX = 0, neutralLY = 0, neutralRX = 0, neutralRY = 0;
-static bool g_useZForRightStick = false;
+// Kalibrasi Titik Netral untuk SEMUA sumbu analog
+static LONG neutralLX = 0, neutralLY = 0;
+static LONG neutralRX = 0, neutralRY = 0; 
+static LONG neutralZ  = 0, neutralRZ  = 0;
 
-// Map untuk tombol controller
 static std::map<std::string, int> g_btnIdx = {
     {"Cross", 1}, {"Circle", 2}, {"Square", 0}, {"Triangle", 3},
     {"L1", 4}, {"R1", 5}, {"L2", 6}, {"R2", 7},
     {"Share", 8}, {"Options", 9}, {"L3", 10}, {"R3", 11}, {"PS", 12},
     {"Touchpad", 13},
-    {"DpadUp", -1}, {"DpadDown", -1}, {"DpadLeft", -1}, {"DpadRight", -1} // D-Pad ditangani khusus
+    {"DpadUp", -1}, {"DpadDown", -1}, {"DpadLeft", -1}, {"DpadRight", -1} 
 };
 
-// Struktur untuk menampung aksi (Bisa Keyboard, Mouse, atau Combo)
 struct ActionBinding {
-    std::vector<WORD> vkCodes; // Kode tombol keyboard (bisa lebih dari 1 untuk combo)
-    int mouseAction;           // 0 = None, 1 = Left, 2 = Right, 3 = Middle
+    std::vector<WORD> vkCodes;
+    int mouseAction; // 0 = None, 1 = Left, 2 = Right, 3 = Middle
 };
 
-// Map utama untuk config [Bindings]
 static std::map<std::string, ActionBinding> g_bindings;
-
-// Analog Functions
 static std::map<std::string, std::string> g_analogFuncs = {
     {"LeftStick", "Mouse"}, {"RightStick", "Scroll"}
 };
@@ -65,11 +62,7 @@ static std::string Trim(const std::string& s) {
 
 static void LoadConfig(const char* path) {
     std::ifstream f(path);
-    if (!f) {
-        printf("[i] config.ini tidak ditemukan, pakai default (Mouse & Keyboard).\n");
-        return;
-    }
-    printf("[i] Membaca %s\n", path);
+    if (!f) return;
 
     std::string line, section;
     while (std::getline(f, line)) {
@@ -93,13 +86,11 @@ static void LoadConfig(const char* path) {
         if (section == "Bindings") {
             ActionBinding act;
             act.mouseAction = 0;
-            
             if (val == "MouseLeft") act.mouseAction = 1;
             else if (val == "MouseRight") act.mouseAction = 2;
             else if (val == "MouseMiddle") act.mouseAction = 3;
-            else if (val == "None") act.mouseAction = -1; // Disabled
+            else if (val == "None") act.mouseAction = -1;
             else if (val.find("Key:") == 0) {
-                // Parsing format "Key:0x20+0x43" (Space + C)
                 std::string keysStr = val.substr(4);
                 std::stringstream ss(keysStr);
                 std::string segment;
@@ -117,7 +108,6 @@ static void LoadConfig(const char* path) {
             else if (key == "Speed3") { try { g_speeds[2] = std::stoi(val); } catch (...) {} }
         }
     }
-    printf("[+] Config loaded.\n");
 }
 
 static bool IsButtonPressed(const std::string& btnName) {
@@ -159,21 +149,16 @@ static void ExecuteBinding(const std::string& btnName, bool isPressed, const Act
     static std::map<std::string, bool> lastStates;
     bool lastState = lastStates[btnName];
 
-    if (isPressed && !lastState) { // Tombol Baru Ditekan
+    if (isPressed && !lastState) {
         if (act.mouseAction == 1) MouseClick(MOUSEEVENTF_LEFTDOWN);
         else if (act.mouseAction == 2) MouseClick(MOUSEEVENTF_RIGHTDOWN);
         else if (act.mouseAction == 3) MouseClick(MOUSEEVENTF_MIDDLEDOWN);
-        else {
-            for (WORD vk : act.vkCodes) KeyAction(vk, true);
-        }
-    } else if (!isPressed && lastState) { // Tombol Dilepas
+        else { for (WORD vk : act.vkCodes) KeyAction(vk, true); }
+    } else if (!isPressed && lastState) {
         if (act.mouseAction == 1) MouseClick(MOUSEEVENTF_LEFTUP);
         else if (act.mouseAction == 2) MouseClick(MOUSEEVENTF_RIGHTUP);
         else if (act.mouseAction == 3) MouseClick(MOUSEEVENTF_MIDDLEUP);
-        else {
-            // Lepas kebalikan dari urutan tekan (untuk combo)
-            for (auto it = act.vkCodes.rbegin(); it != act.vkCodes.rend(); ++it) KeyAction(*it, false);
-        }
+        else { for (auto it = act.vkCodes.rbegin(); it != act.vkCodes.rend(); ++it) KeyAction(*it, false); }
     }
     lastStates[btnName] = isPressed;
 }
@@ -195,7 +180,12 @@ static bool InitDirectInput() {
     if (FAILED(DirectInput8Create(GetModuleHandle(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8, (void**)&g_pDI, nullptr))) return false;
     if (FAILED(g_pDI->EnumDevices(DI8DEVCLASS_GAMECTRL, EnumCallback, nullptr, DIEDFL_ATTACHEDONLY)) || !g_pDev) return false;
     if (FAILED(g_pDev->SetDataFormat(&c_dfDIJoystick2))) return false;
-    if (FAILED(g_pDev->SetCooperativeLevel(GetConsoleWindow(), DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) return false;
+
+    // Gunakan BACKGROUND agar tetap membaca meskipun window game sedang aktif
+    if (FAILED(g_pDev->SetCooperativeLevel(GetConsoleWindow(), DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) {
+        printf("[X] SetCooperativeLevel gagal. Pastikan Run as Administrator.\n");
+        return false;
+    }
 
     DIPROPRANGE range;
     range.diph.dwSize = sizeof(DIPROPRANGE); range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
@@ -209,13 +199,12 @@ static bool InitDirectInput() {
 
     g_pDev->Acquire();
     Sleep(50); g_pDev->Poll();
+    
+    // Kalibrasi awal semua sumbu
     if (SUCCEEDED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) {
         neutralLX = g_js.lX; neutralLY = g_js.lY;
-        if (std::abs(g_js.lRx) < 1000 && std::abs(g_js.lRy) < 1000) {
-            g_useZForRightStick = true; neutralRX = g_js.lZ; neutralRY = g_js.lRz;
-        } else {
-            g_useZForRightStick = false; neutralRX = g_js.lRx; neutralRY = g_js.lRy;
-        }
+        neutralRX = g_js.lRx; neutralRY = g_js.lRy;
+        neutralZ = g_js.lZ; neutralRZ = g_js.lRz;
     }
     return true;
 }
@@ -233,7 +222,6 @@ static void ProcessFrame() {
 
     bool isConsoleFocused = (GetForegroundWindow() == GetConsoleWindow());
     
-    // Cek tombol Options untuk sembunyikan console (tetap default)
     static bool lastHide = false;
     bool curHide = IsButtonPressed("Options");
     if (curHide && !lastHide && !isConsoleFocused) ToggleConsole();
@@ -241,11 +229,20 @@ static void ProcessFrame() {
 
     if (isConsoleFocused && !g_consoleHidden) return;
 
-    // Analog
+    // Baca semua kemungkinan sumbu untuk stik kiri
     float lx = NormStick(g_js.lX - neutralLX);
     float ly = NormStick(g_js.lY - neutralLY);
-    float rx = NormStick((g_useZForRightStick ? g_js.lZ : g_js.lRx) - neutralRX);
-    float ry = NormStick((g_useZForRightStick ? g_js.lRz : g_js.lRy) - neutralRY);
+
+    // Baca semua kemungkinan sumbu untuk stik kanan (Rx/Ry DAN Z/Rz)
+    float rx1 = NormStick(g_js.lRx - neutralRX);
+    float ry1 = NormStick(g_js.lRy - neutralRY);
+    float rx2 = NormStick(g_js.lZ - neutralZ);
+    float ry2 = NormStick(g_js.lRz - neutralRZ);
+
+    // Pilih nilai yang paling besar pergerakannya (deteksi otomatis 100% anti-gagal)
+    float rx = (std::abs(rx1) > std::abs(rx2)) ? rx1 : rx2;
+    float ry = (std::abs(ry1) > std::abs(ry2)) ? ry1 : ry2;
+
     int speed = g_speeds[g_speedIdx];
 
     if (g_analogFuncs["LeftStick"] == "Mouse") MoveMouse((int)(lx * std::abs(lx) * speed), (int)(ly * std::abs(ly) * speed));
@@ -254,7 +251,6 @@ static void ProcessFrame() {
     if (g_analogFuncs["RightStick"] == "Mouse") MoveMouse((int)(rx * std::abs(rx) * speed), (int)(ry * std::abs(ry) * speed));
     else if (g_analogFuncs["RightStick"] == "Scroll" && std::abs(ry) > 0.2f) ScrollMouse((int)(ry * 120.0f));
 
-    // Eksekusi semua tombol yang ada di [Bindings]
     for (const auto& pair : g_bindings) {
         ExecuteBinding(pair.first, IsButtonPressed(pair.first), pair.second);
     }
@@ -269,7 +265,7 @@ int main(int argc, char** argv) {
     LoadConfig("config.ini");
     if (!InitDirectInput()) { printf("Tekan Enter untuk keluar...\n"); getchar(); return 1; }
 
-    printf("[i] Ctrl+C untuk keluar.\n");
+    printf("[i] Berjalan di background. Ctrl+C di sini untuk keluar.\n");
     while (g_running) { ProcessFrame(); Sleep(16); }
 
     if (g_pDev) { g_pDev->Unacquire(); g_pDev->Release(); }
