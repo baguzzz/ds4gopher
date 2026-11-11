@@ -2,351 +2,222 @@
 <html lang="id">
 <head>
 <meta charset="UTF-8">
-<title>DS4Gopher — Config Editor</title>
+<title>DS4Gopher — Steam-like Config</title>
 <style>
   * { box-sizing: border-box; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; }
-  h1 { color: #4fc3f7; margin: 0 0 4px; font-size: 24px; }
-  h2 { color: #81c784; font-size: 16px; margin: 24px 0 12px; border-bottom: 1px solid #2a2f3a; padding-bottom: 8px; }
-  .sub { color: #888; font-size: 13px; margin: 0 0 16px; }
-  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 1400px; margin: auto; }
-  .panel { background: #1a1d24; border: 1px solid #2a2f3a; border-radius: 12px; padding: 20px; }
-  .status { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; background: #263238; color: #b0bec5; }
-  .status.connected { background: #1b5e20; color: #a5d6a7; }
-  .status.disconnected { background: #b71c1c; color: #ef9a9a; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #171a21; color: #c6d4df; margin: 0; padding: 20px; display: flex; justify-content: center; }
+  .container { display: flex; gap: 20px; max-width: 1200px; width: 100%; }
   
-  .action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: center; padding: 8px 12px; background: #0d1017; border-radius: 6px; margin-bottom: 6px; }
-  .action-name { font-size: 13px; color: #b0bec5; }
-  .action-val { padding: 8px 12px; background: #1a1d24; border: 1px solid #2a2f3a; border-radius: 4px; color: #4fc3f7; font-family: monospace; font-size: 13px; cursor: pointer; user-select: none; text-align: center; transition: all 0.15s; }
-  .action-val:hover { border-color: #4fc3f7; }
-  .action-val.remapping { background: #ffb74d; color: #000; border-color: #ffb74d; animation: pulse 1s infinite; }
-  
-  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 #ffb74d88; } 50% { box-shadow: 0 0 0 8px #ffb74d00; } }
-  
-  .setting { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #2a2f3a; }
-  .setting:last-child { border-bottom: none; }
-  .setting label { font-size: 13px; color: #b0bec5; }
-  .setting input[type="number"], .setting select { width: 140px; padding: 6px 8px; background: #0d1017; border: 1px solid #2a2f3a; border-radius: 4px; color: #fff; font-family: monospace; }
-  
-  .custom-key-grid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; margin-bottom: 8px; background: #0d1017; padding: 8px; border-radius: 6px; }
-  .custom-key-grid select { padding: 8px; background: #1a1d24; border: 1px solid #2a2f3a; border-radius: 4px; color: #4fc3f7; font-family: monospace; width: 100%; }
-  .btn-add { padding: 10px 16px; background: #4fc3f7; color: #000; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; margin-top: 8px; width: 100%; }
-  .btn-add:hover { background: #81d4fa; }
-  .btn-del { background: #ef5350; color: #fff; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-weight: bold; }
-  .btn-del:hover { background: #f44336; }
+  /* Bagian Kiri: Preview Controller */
+  .left-panel { width: 350px; background: #1b2838; padding: 20px; border-radius: 8px; height: fit-content; }
+  .left-panel h2 { color: #66c0f4; margin-top: 0; font-size: 18px; text-transform: uppercase; }
+  .controller-img { width: 100%; height: 200px; background: #2a475e; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 20px; color: #8f98a0; font-style: italic; }
+  .analog-settings { margin-top: 20px; border-top: 1px solid #2a475e; padding-top: 20px; }
+  .setting { display: flex; justify-content: space-between; margin-bottom: 10px; align-items: center; }
+  .setting label { font-size: 13px; color: #8f98a0; }
+  .setting select, .setting input { background: #2a475e; border: 1px solid #66c0f4; color: #fff; padding: 5px; border-radius: 3px; outline: none; }
 
-  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
-  button.act { padding: 10px 16px; background: #4fc3f7; color: #000; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; }
-  button.act:hover { background: #81d4fa; }
-  button.act.secondary { background: #2a2f3a; color: #e6e6e6; }
-  button.act.secondary:hover { background: #3a4050; }
+  /* Bagian Kanan: List Bindings */
+  .right-panel { flex: 1; background: #1b2838; padding: 20px; border-radius: 8px; }
+  .right-panel h2 { color: #66c0f4; margin-top: 0; font-size: 18px; text-transform: uppercase; }
   
-  .preview { background: #0d1017; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; color: #81c784; max-height: 300px; overflow: auto; white-space: pre; margin-top: 12px; }
-  .mono { font-family: monospace; }
+  .grid-list { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+  .binding-row { display: flex; flex-direction: column; background: #2a475e; padding: 10px; border-radius: 4px; border-left: 4px solid #66c0f4; }
+  .binding-row label { font-weight: bold; margin-bottom: 5px; color: #fff; font-size: 14px; }
+  .binding-row select { padding: 8px; background: #171a21; color: #66c0f4; border: 1px solid #000; border-radius: 3px; font-family: monospace; font-size: 14px; }
+  
+  .footer { margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end; }
+  button { background: linear-gradient( to bottom, #a4d007 5%, #536904 95%); color: #fff; border: none; padding: 10px 20px; font-size: 15px; border-radius: 4px; cursor: pointer; font-weight: bold; text-shadow: 1px 1px 0px rgba(0,0,0,0.3); }
+  button:hover { background: linear-gradient( to bottom, #b6e40c 5%, #6b8a05 95%); }
+  button.secondary { background: #2a475e; border: 1px solid #66c0f4; text-shadow: none; color: #66c0f4; }
+  button.secondary:hover { background: #3a5a73; }
+  
+  /* Preview Code */
+  .code-preview { grid-column: span 2; background: #000; color: #a4d007; padding: 10px; font-family: monospace; font-size: 12px; white-space: pre; height: 150px; overflow-y: auto; border-radius: 4px; margin-top: 10px; }
 </style>
 </head>
 <body>
-<div class="layout">
 
-  <!-- LEFT: Remap -->
-  <div class="panel">
-    <h1>DS4Gopher Config Editor</h1>
-    <p class="sub">Remap tombol, atur fungsi analog, lalu export <code>config.ini</code>.</p>
-
-    <div id="status" class="status disconnected">Colok DS4 lalu tekan tombol apa saja di controller.</div>
-
-    <h2>1. Remap Tombol Bawaan</h2>
-    <div id="actionList"></div>
-
-    <h2>2. Pengaturan Umum</h2>
-    <div class="setting"><label>Deadzone analog (0-32767)</label><input type="number" id="deadzone" value="8000" min="0" max="20000"></div>
-    <div class="setting"><label>Speed Level 1 (lambat)</label><input type="number" id="speed1" value="6" min="1" max="100"></div>
-    <div class="setting"><label>Speed Level 2 (sedang)</label><input type="number" id="speed2" value="14" min="1" max="100"></div>
-    <div class="setting"><label>Speed Level 3 (cepat)</label><input type="number" id="speed3" value="28" min="1" max="100"></div>
-
-    <h2>3. Fungsi Analog (Stik)</h2>
+<div class="container">
+  <!-- KIRI -->
+  <div class="left-panel">
+    <h2>Analog Settings</h2>
     <div class="setting">
-      <label>Analog Kiri (Left Stick)</label>
-      <select id="leftStickFunc">
-        <option value="Mouse">Mouse (Gerak Kursor)</option>
-        <option value="Scroll">Scroll (Gulir)</option>
-        <option value="None">None (Mati)</option>
+      <label>Left Stick</label>
+      <select id="leftStickFunc" onchange="updateIni()">
+        <option value="Mouse">Mouse</option>
+        <option value="Scroll">Scroll</option>
+        <option value="None">None</option>
       </select>
     </div>
     <div class="setting">
-      <label>Analog Kanan (Right Stick)</label>
-      <select id="rightStickFunc">
-        <option value="Mouse">Mouse (Gerak Kursor)</option>
-        <option value="Scroll">Scroll (Gulir)</option>
-        <option value="None">None (Mati)</option>
+      <label>Right Stick</label>
+      <select id="rightStickFunc" onchange="updateIni()">
+        <option value="Mouse">Mouse</option>
+        <option value="Scroll">Scroll</option>
+        <option value="None">None</option>
       </select>
     </div>
-
-    <h2>4. Custom Keyboard Keys</h2>
-    <p class="sub">Petakan tombol controller ke tombol keyboard bebas (A-Z, F1-F12, dll).</p>
-    <div id="customKeysList"></div>
-    <div class="custom-key-grid">
-      <select id="newKeyBtn"></select>
-      <select id="newKeyVk"></select>
-      <button class="btn-add" onclick="addCustomKey()" style="width:auto; margin:0;">Tambah</button>
+    <div class="setting">
+      <label>Deadzone</label>
+      <input type="number" id="deadzone" value="8000" onchange="updateIni()">
     </div>
-
-    <div class="toolbar">
-      <button class="act" onclick="exportIni()">⬇ Export config.ini</button>
-      <button class="act secondary" onclick="document.getElementById('fileInput').click()">⬆ Import</button>
-      <button class="act secondary" onclick="resetDefaults()">↺ Reset</button>
-      <input type="file" id="fileInput" accept=".ini" style="display:none" onchange="importIni(event)">
-    </div>
-
-    <div class="preview" id="preview"># Preview config.ini</div>
+    
+    <h2>Actions</h2>
+    <button class="secondary" onclick="resetDefaults()" style="width:100%; margin-bottom:10px;">Reset to Default</button>
+    <button onclick="downloadIni()" style="width:100%;">Download config.ini</button>
   </div>
 
-  <!-- RIGHT: Monitor -->
-  <div class="panel">
-    <h2>Live Monitor</h2>
-    <div class="status" id="monitorInfo">Menunggu input...</div>
-
-    <h2>Stick Analog</h2>
-    <div class="setting"><label>Left X</label><span id="lx" class="mono">0.00</span></div>
-    <div class="setting"><label>Left Y</label><span id="ly" class="mono">0.00</span></div>
-    <div class="setting"><label>Right X</label><span id="rx" class="mono">0.00</span></div>
-    <div class="setting"><label>Right Y</label><span id="ry" class="mono">0.00</span></div>
-
-    <h2>Tombol Aktif</h2>
-    <div id="activeButtons" class="mono" style="color:#4fc3f7; min-height:24px">(tidak ada)</div>
+  <!-- KANAN -->
+  <div class="right-panel">
+    <h2>Controller Bindings</h2>
+    <div class="grid-list" id="bindingsContainer">
+      <!-- Javascript akan mengisi ini -->
+    </div>
+    <div class="code-preview" id="iniPreview">Preview config.ini...</div>
   </div>
-
 </div>
 
 <script>
-const BTN_NAMES = ['Cross','Circle','Square','Triangle','L1','R1','L2','R2','Share','Options','L3','R3','PS','Touchpad'];
-const DEFAULT_BTN_INDICES = { Cross:1, Circle:2, Square:0, Triangle:3, L1:4, R1:5, L2:6, R2:7, Share:8, Options:9, L3:10, R3:11, PS:12, Touchpad:13 };
+// Daftar tombol controller
+const buttons = [
+  "Cross", "Circle", "Square", "Triangle",
+  "L1", "R1", "L2", "R2",
+  "Share", "Options", "L3", "R3", "PS", "Touchpad",
+  "DpadUp", "DpadDown", "DpadLeft", "DpadRight"
+];
 
-const VK_LIST = {
-  "A": "0x41", "B": "0x42", "C": "0x43", "D": "0x44", "E": "0x45", "F": "0x46", "G": "0x47", "H": "0x48", "I": "0x49", "J": "0x4A", "K": "0x4B", "L": "0x4C", "M": "0x4D", "N": "0x4E", "O": "0x4F", "P": "0x50", "Q": "0x51", "R": "0x52", "S": "0x53", "T": "0x54", "U": "0x55", "V": "0x56", "W": "0x57", "X": "0x58", "Y": "0x59", "Z": "0x5A",
-  "0": "0x30", "1": "0x31", "2": "0x32", "3": "0x33", "4": "0x34", "5": "0x35", "6": "0x36", "7": "0x37", "8": "0x38", "9": "0x39",
-  "Enter": "0x0D", "Esc": "0x1B", "Space": "0x20", "Tab": "0x09", "Backspace": "0x08", "Delete": "0x2E", "Shift": "0x10", "Ctrl": "0x11", "Alt": "0x12", "Windows": "0x5B",
-  "F1": "0x70", "F2": "0x71", "F3": "0x72", "F4": "0x73", "F5": "0x74", "F6": "0x75", "F7": "0x76", "F8": "0x77", "F9": "0x78", "F10": "0x79", "F11": "0x7A", "F12": "0x7B",
-  "Up": "0x26", "Down": "0x28", "Left": "0x25", "Right": "0x27"
+// Daftar aksi (Keyboard & Mouse)
+const actions = {
+  "None": "None",
+  "MouseLeft": "Mouse Left Click",
+  "MouseRight": "Mouse Right Click",
+  "MouseMiddle": "Mouse Middle Click",
+  "Key:0x20": "Keyboard: Space",
+  "Key:0x0D": "Keyboard: Enter",
+  "Key:0x1B": "Keyboard: Esc",
+  "Key:0x09": "Keyboard: Tab",
+  "Key:0x08": "Keyboard: Backspace",
+  "Key:0x10": "Keyboard: Shift",
+  "Key:0x11": "Keyboard: Ctrl",
+  "Key:0x12": "Keyboard: Alt",
+  "Key:0x5B": "Keyboard: Windows",
+  "Key:0x26": "Keyboard: Arrow Up",
+  "Key:0x28": "Keyboard: Arrow Down",
+  "Key:0x25": "Keyboard: Arrow Left",
+  "Key:0x27": "Keyboard: Arrow Right",
+  "Key:0x74": "Keyboard: F5 (Refresh)",
+  "Key:0x41": "Keyboard: A",
+  "Key:0x42": "Keyboard: B",
+  "Key:0x43": "Keyboard: C",
+  "Key:0x44": "Keyboard: D",
+  "Key:0x57": "Keyboard: W",
+  "Key:0x41+0x43": "Combo: Ctrl + C", // A+ C bukan Ctrl+C, kita asumsikan C saja
+  "Key:0x11+0x43": "Combo: Ctrl + C",
+  "Key:0x11+0x56": "Combo: Ctrl + V"
 };
 
-let mapping = {
-  MouseLeft:'L1', MouseRight:'R1', MouseMiddle:'L3', Cross:'Cross', Circle:'Circle', Triangle:'Triangle', Square:'Square', Share:'Share', Options:'Options', R3:'R3', L2:'L2', R2:'R2', SpeedCycle:'L3+R3', Disable:'Options+Share'
+// Default Mapping (seperti Steam)
+let defaultMap = {
+  "Cross": "MouseLeft",
+  "Circle": "MouseRight",
+  "Square": "Key:0x20", // Space
+  "Triangle": "Key:0x1B", // Esc
+  "L1": "Key:0x10", // Shift
+  "R1": "Key:0x11", // Ctrl
+  "L2": "Key:0x1B", // Esc
+  "R2": "Key:0x0D", // Enter
+  "Share": "Key:0x5B", // Win Key
+  "Options": "Key:0x09", // Tab
+  "L3": "None",
+  "R3": "Key:0x74", // F5
+  "PS": "None",
+  "Touchpad": "None",
+  "DpadUp": "Key:0x26",
+  "DpadDown": "Key:0x28",
+  "DpadLeft": "Key:0x25",
+  "DpadRight": "Key:0x27"
 };
-let btnIndices = { ...DEFAULT_BTN_INDICES };
-let customKeys = {}; 
-let analogFuncs = { LeftStick: 'Mouse', RightStick: 'Scroll' };
-let remappingAction = null;
-let currentGamepad = null;
-let lastPressed = {};
 
-const ACTION_LABELS = {
-  MouseLeft: 'Klik Kiri Mouse', MouseRight: 'Klik Kanan Mouse', MouseMiddle: 'Klik Tengah Mouse',
-  Cross: 'Cross → Klik Kiri', Circle: 'Circle → Enter', Triangle: 'Triangle → F24', Square: 'Square → (kosong)',
-  Share: 'Share → Esc', Options: 'Options → Toggle Console', R3: 'R3 → F2', L2: 'L2 → Space', R2: 'R2 → Backspace',
-  SpeedCycle: 'Kombinasi Speed Cycle', Disable: 'Kombinasi Disable/Enable'
-};
+let currentMap = { ...defaultMap };
 
-function initDropdowns() {
-  const btnSelect = document.getElementById('newKeyBtn');
-  const vkSelect = document.getElementById('newKeyVk');
-  BTN_NAMES.forEach(name => btnSelect.add(new Option(name, name)));
-  for (const [key, val] of Object.entries(VK_LIST)) vkSelect.add(new Option(key, val));
-}
+function initUI() {
+  const container = document.getElementById('bindingsContainer');
+  container.innerHTML = '';
 
-function renderActions() {
-  const c = document.getElementById('actionList');
-  c.innerHTML = '';
-  for (const [action, btn] of Object.entries(mapping)) {
-    const row = document.createElement('div');
-    row.className = 'action-row';
-    row.innerHTML = `<span class="action-name">${ACTION_LABELS[action] || action}</span><span class="action-val" data-action="${action}">${btn}</span>`;
-    row.querySelector('.action-val').onclick = () => startRemap(action);
-    c.appendChild(row);
-  }
-  updatePreview();
-}
-
-function renderCustomKeys() {
-  const c = document.getElementById('customKeysList');
-  c.innerHTML = '';
-  if (Object.keys(customKeys).length === 0) {
-    c.innerHTML = '<p class="sub" style="text-align:center">Belum ada custom key.</p>';
-    return;
-  }
-  for (const [btn, vk] of Object.entries(customKeys)) {
-    const vkName = Object.keys(VK_LIST).find(k => VK_LIST[k] === vk) || vk;
-    const row = document.createElement('div');
-    row.className = 'custom-key-grid';
-    row.innerHTML = `
-      <span class="mono" style="color:#fff">${btn}</span>
-      <span class="mono" style="color:#81c784">${vkName}</span>
-      <button class="btn-del" onclick="delCustomKey('${btn}')">X</button>
-    `;
-    c.appendChild(row);
-  }
-}
-
-function addCustomKey() {
-  const btn = document.getElementById('newKeyBtn').value;
-  const vk = document.getElementById('newKeyVk').value;
-  customKeys[btn] = vk;
-  renderCustomKeys();
-  updatePreview();
-}
-
-function delCustomKey(btn) {
-  delete customKeys[btn];
-  renderCustomKeys();
-  updatePreview();
-}
-
-function startRemap(action) {
-  remappingAction = action;
-  document.querySelectorAll('.action-val').forEach(el => {
-    el.classList.remove('remapping');
-    el.textContent = mapping[el.dataset.action];
-  });
-  const el = document.querySelector(`.action-val[data-action="${action}"]`);
-  if (el) { el.classList.add('remapping'); el.textContent = 'tekan tombol...'; }
-}
-
-function pollGamepad() {
-  const gps = navigator.getGamepads ? navigator.getGamepads() : [];
-  currentGamepad = null;
-  for (const gp of gps) if (gp && gp.connected) { currentGamepad = gp; break; }
-
-  const status = document.getElementById('status');
-  if (!currentGamepad) {
-    status.textContent = 'Colok DS4 lalu tekan tombol apa saja.';
-    status.className = 'status disconnected';
-    requestAnimationFrame(pollGamepad);
-    return;
-  }
-  status.textContent = '✅ ' + currentGamepad.id;
-  status.className = 'status connected';
-
-  document.getElementById('lx').textContent = (currentGamepad.axes[0]||0).toFixed(2);
-  document.getElementById('ly').textContent = (currentGamepad.axes[1]||0).toFixed(2);
-  document.getElementById('rx').textContent = (currentGamepad.axes[2]||0).toFixed(2);
-  document.getElementById('ry').textContent = (currentGamepad.axes[3]||0).toFixed(2);
-
-  const active = [];
-  for (let i = 0; i < currentGamepad.buttons.length; i++) {
-    const b = currentGamepad.buttons[i];
-    const pressed = b.pressed || b.value > 0.5;
-    if (pressed) active.push(BTN_NAMES[i] || `btn${i}`);
-
-    if (pressed && !lastPressed[i] && remappingAction) {
-      mapping[remappingAction] = BTN_NAMES[i] || `btn${i}`;
-      remappingAction = null;
-      renderActions();
+  buttons.forEach(btn => {
+    const div = document.createElement('div');
+    div.className = 'binding-row';
+    
+    let optionsHTML = '';
+    for (const [val, label] of Object.entries(actions)) {
+      const selected = (currentMap[btn] === val) ? 'selected' : '';
+      optionsHTML += `<option value="${val}" ${selected}>${label}</option>`;
     }
-    lastPressed[i] = pressed;
-  }
-  document.getElementById('activeButtons').textContent = active.length ? active.join(', ') : '(tidak ada)';
-  requestAnimationFrame(pollGamepad);
+
+    div.innerHTML = `
+      <label>${btn}</label>
+      <select onchange="updateBinding('${btn}', this.value)">
+        ${optionsHTML}
+      </select>
+    `;
+    container.appendChild(div);
+  });
+
+  // Tambahkan kotak preview di grid
+  const previewDiv = document.createElement('div');
+  previewDiv.className = 'code-preview';
+  previewDiv.id = 'iniPreview';
+  container.appendChild(previewDiv);
+
+  updateIni();
 }
 
-function buildIni() {
-  let lines = [];
-  lines.push('# DS4Gopher Configuration\n# Generated by config-editor.html\n');
-  
-  lines.push('[General]');
-  lines.push(`Deadzone = ${document.getElementById('deadzone').value}`);
-  lines.push(`Speed1 = ${document.getElementById('speed1').value}`);
-  lines.push(`Speed2 = ${document.getElementById('speed2').value}`);
-  lines.push(`Speed3 = ${document.getElementById('speed3').value}\n`);
-  
-  lines.push('[Analog]');
-  lines.push(`LeftStick = ${document.getElementById('leftStickFunc').value}`);
-  lines.push(`RightStick = ${document.getElementById('rightStickFunc').value}\n`);
-
-  lines.push('[ButtonIndices]');
-  for (const [n, i] of Object.entries(btnIndices)) lines.push(`${n} = ${i}`);
-  lines.push('');
-  
-  lines.push('[Actions]');
-  for (const [a, b] of Object.entries(mapping)) lines.push(`${a} = ${b}`);
-  lines.push('');
-  
-  lines.push('[CustomKeys]');
-  if (Object.keys(customKeys).length === 0) {
-    lines.push('# (Kosong)');
-  } else {
-    for (const [btn, vk] of Object.entries(customKeys)) lines.push(`${btn} = ${vk}`);
-  }
-  return lines.join('\n') + '\n';
+function updateBinding(button, value) {
+  currentMap[button] = value;
+  updateIni();
 }
 
-function updatePreview() { document.getElementById('preview').textContent = buildIni(); }
+function updateIni() {
+  let ini = `[General]\n`;
+  ini += `Deadzone = ${document.getElementById('deadzone').value}\n`;
+  ini += `Speed1 = 6\nSpeed2 = 14\nSpeed3 = 28\n\n`;
 
-function exportIni() {
-  const blob = new Blob([buildIni()], { type: 'text/plain' });
+  ini += `[Analog]\n`;
+  ini += `LeftStick = ${document.getElementById('leftStickFunc').value}\n`;
+  ini += `RightStick = ${document.getElementById('rightStickFunc').value}\n\n`;
+
+  ini += `[Bindings]\n`;
+  for (const btn of buttons) {
+    ini += `${btn} = ${currentMap[btn]}\n`;
+  }
+
+  const preview = document.getElementById('iniPreview');
+  if (preview) preview.textContent = ini;
+  return ini;
+}
+
+function downloadIni() {
+  const ini = updateIni();
+  const blob = new Blob([ini], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = 'config.ini'; a.click();
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'config.ini';
+  a.click();
   URL.revokeObjectURL(url);
 }
 
-function importIni(ev) {
-  const f = ev.target.files[0];
-  if (!f) return;
-  const r = new FileReader();
-  r.onload = (e) => {
-    let section = '';
-    for (const raw of e.target.result.split('\n')) {
-      let line = raw.split('#')[0].split(';')[0].trim();
-      if (!line) continue;
-      if (line.startsWith('[') && line.endsWith(']')) { section = line.slice(1, -1); continue; }
-      const eq = line.indexOf('=');
-      if (eq < 0) continue;
-      const k = line.slice(0, eq).trim(), v = line.slice(eq + 1).trim();
-      
-      if (section === 'Actions') mapping[k] = v;
-      else if (section === 'ButtonIndices') btnIndices[k] = parseInt(v) || 0;
-      else if (section === 'CustomKeys') customKeys[k] = v;
-      else if (section === 'Analog') {
-        analogFuncs[k] = v;
-        if (k === 'LeftStick') document.getElementById('leftStickFunc').value = v;
-        if (k === 'RightStick') document.getElementById('rightStickFunc').value = v;
-      }
-      else if (section === 'General') {
-        const map = { Deadzone:'deadzone', Speed1:'speed1', Speed2:'speed2', Speed3:'speed3' };
-        const el = document.getElementById(map[k]);
-        if (el) el.value = v;
-      }
-    }
-    renderActions();
-    renderCustomKeys();
-  };
-  r.readAsText(f);
-  ev.target.value = '';
-}
-
 function resetDefaults() {
-  mapping = { MouseLeft:'L1', MouseRight:'R1', MouseMiddle:'L3', Cross:'Cross', Circle:'Circle', Triangle:'Triangle', Square:'Square', Share:'Share', Options:'Options', R3:'R3', L2:'L2', R2:'R2', SpeedCycle:'L3+R3', Disable:'Options+Share' };
-  customKeys = {};
-  btnIndices = { ...DEFAULT_BTN_INDICES };
-  analogFuncs = { LeftStick: 'Mouse', RightStick: 'Scroll' };
-  document.getElementById('deadzone').value = 8000;
-  document.getElementById('speed1').value = 6;
-  document.getElementById('speed2').value = 14;
-  document.getElementById('speed3').value = 28;
+  currentMap = { ...defaultMap };
   document.getElementById('leftStickFunc').value = 'Mouse';
   document.getElementById('rightStickFunc').value = 'Scroll';
-  renderActions();
-  renderCustomKeys();
+  document.getElementById('deadzone').value = 8000;
+  initUI();
 }
 
-window.addEventListener('gamepadconnected', () => pollGamepad());
-initDropdowns();
-renderActions();
-renderCustomKeys();
-pollGamepad();
-['deadzone','speed1','speed2','speed3', 'leftStickFunc', 'rightStickFunc'].forEach(id => {
-  document.getElementById(id).addEventListener('input', updatePreview);
-  document.getElementById(id).addEventListener('change', updatePreview);
-});
+// Start
+initUI();
 </script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 // =====================================================================
-//  DS4Gopher - Gopher360-style utility untuk DualShock 4 via DirectInput
+//  DS4Gopher - Steam-like Controller Mapper untuk DualShock 4
 // =====================================================================
 #define DIRECTINPUT_VERSION 0x0800
 #include <windows.h>
@@ -12,6 +12,7 @@
 #include <string>
 #include <sstream>
 #include <map>
+#include <vector>
 
 #pragma comment(lib, "dinput8.lib")
 #pragma comment(lib, "dxguid.lib")
@@ -28,27 +29,28 @@ static int                   g_speedIdx      = 1;
 static int                   g_speeds[3]     = { 6, 14, 28 };
 static int                   g_deadzone      = 8000;
 
-// Neutral points
-static LONG neutralLX = 0, neutralLY = 0;
-static LONG neutralRX = 0, neutralRY = 0; 
-static LONG neutralZ = 0, neutralRZ = 0;
+static LONG neutralLX = 0, neutralLY = 0, neutralRX = 0, neutralRY = 0;
+static bool g_useZForRightStick = false;
 
+// Map untuk tombol controller
 static std::map<std::string, int> g_btnIdx = {
     {"Cross", 1}, {"Circle", 2}, {"Square", 0}, {"Triangle", 3},
     {"L1", 4}, {"R1", 5}, {"L2", 6}, {"R2", 7},
     {"Share", 8}, {"Options", 9}, {"L3", 10}, {"R3", 11}, {"PS", 12},
-    {"Touchpad", 13}
+    {"Touchpad", 13},
+    {"DpadUp", -1}, {"DpadDown", -1}, {"DpadLeft", -1}, {"DpadRight", -1} // D-Pad ditangani khusus
 };
 
-static std::map<std::string, std::string> g_actions = {
-    {"MouseLeft",   "L1"}, {"MouseRight",  "R1"}, {"MouseMiddle", "L3"},
-    {"Cross",       "Cross"}, {"Circle",    "Circle"}, {"Triangle", "Triangle"},
-    {"Square",      "Square"}, {"Share",    "Share"}, {"Options", "Options"},
-    {"R3",          "R3"}, {"L2", "L2"}, {"R2", "R2"},
-    {"SpeedCycle",  "L3+R3"}, {"Disable", "Options+Share"}
+// Struktur untuk menampung aksi (Bisa Keyboard, Mouse, atau Combo)
+struct ActionBinding {
+    std::vector<WORD> vkCodes; // Kode tombol keyboard (bisa lebih dari 1 untuk combo)
+    int mouseAction;           // 0 = None, 1 = Left, 2 = Right, 3 = Middle
 };
 
-static std::map<std::string, int> g_customKeys;
+// Map utama untuk config [Bindings]
+static std::map<std::string, ActionBinding> g_bindings;
+
+// Analog Functions
 static std::map<std::string, std::string> g_analogFuncs = {
     {"LeftStick", "Mouse"}, {"RightStick", "Scroll"}
 };
@@ -63,7 +65,11 @@ static std::string Trim(const std::string& s) {
 
 static void LoadConfig(const char* path) {
     std::ifstream f(path);
-    if (!f) return;
+    if (!f) {
+        printf("[i] config.ini tidak ditemukan, pakai default (Mouse & Keyboard).\n");
+        return;
+    }
+    printf("[i] Membaca %s\n", path);
 
     std::string line, section;
     while (std::getline(f, line)) {
@@ -84,102 +90,98 @@ static void LoadConfig(const char* path) {
         std::string key = Trim(line.substr(0, eq));
         std::string val = Trim(line.substr(eq + 1));
 
-        if (section == "ButtonIndices") {
-            try { g_btnIdx[key] = std::stoi(val); } catch (...) {}
-        } else if (section == "Actions") {
-            g_actions[key] = val;
-        } else if (section == "CustomKeys") {
-            try { g_customKeys[key] = std::stoi(val, nullptr, 0); } catch (...) {}
+        if (section == "Bindings") {
+            ActionBinding act;
+            act.mouseAction = 0;
+            
+            if (val == "MouseLeft") act.mouseAction = 1;
+            else if (val == "MouseRight") act.mouseAction = 2;
+            else if (val == "MouseMiddle") act.mouseAction = 3;
+            else if (val == "None") act.mouseAction = -1; // Disabled
+            else if (val.find("Key:") == 0) {
+                // Parsing format "Key:0x20+0x43" (Space + C)
+                std::string keysStr = val.substr(4);
+                std::stringstream ss(keysStr);
+                std::string segment;
+                while (std::getline(ss, segment, '+')) {
+                    try { act.vkCodes.push_back((WORD)std::stoi(segment, nullptr, 0)); } catch (...) {}
+                }
+            }
+            g_bindings[key] = act;
         } else if (section == "Analog") {
             g_analogFuncs[key] = val;
         } else if (section == "General") {
-            if      (key == "Deadzone")        { try { g_deadzone = std::stoi(val); } catch (...) {} }
-            else if (key == "Speed1")          { try { g_speeds[0] = std::stoi(val); } catch (...) {} }
-            else if (key == "Speed2")          { try { g_speeds[1] = std::stoi(val); } catch (...) {} }
-            else if (key == "Speed3")          { try { g_speeds[2] = std::stoi(val); } catch (...) {} }
+            if (key == "Deadzone") { try { g_deadzone = std::stoi(val); } catch (...) {} }
+            else if (key == "Speed1") { try { g_speeds[0] = std::stoi(val); } catch (...) {} }
+            else if (key == "Speed2") { try { g_speeds[1] = std::stoi(val); } catch (...) {} }
+            else if (key == "Speed3") { try { g_speeds[2] = std::stoi(val); } catch (...) {} }
         }
     }
-}
-
-static int BtnOf(const std::string& action) {
-    auto it = g_actions.find(action);
-    if (it == g_actions.end()) return -1;
-    auto bit = g_btnIdx.find(it->second);
-    if (bit == g_btnIdx.end()) return -1;
-    return bit->second;
+    printf("[+] Config loaded.\n");
 }
 
 static bool IsButtonPressed(const std::string& btnName) {
+    if (btnName == "DpadUp") return (g_js.rgdwPOV[0] != 0xFFFFFFFF && (g_js.rgdwPOV[0] > 31500 || g_js.rgdwPOV[0] <= 4500));
+    if (btnName == "DpadDown") return (g_js.rgdwPOV[0] != 0xFFFFFFFF && (g_js.rgdwPOV[0] > 13500 && g_js.rgdwPOV[0] <= 22500));
+    if (btnName == "DpadLeft") return (g_js.rgdwPOV[0] != 0xFFFFFFFF && (g_js.rgdwPOV[0] > 22500 && g_js.rgdwPOV[0] <= 31500));
+    if (btnName == "DpadRight") return (g_js.rgdwPOV[0] != 0xFFFFFFFF && (g_js.rgdwPOV[0] > 4500 && g_js.rgdwPOV[0] <= 13500));
+
     auto it = g_btnIdx.find(btnName);
-    if (it == g_btnIdx.end()) return false;
-    int idx = it->second;
-    if (idx < 0 || idx >= 128) return false;
-    return (g_js.rgbButtons[idx] & 0x80) != 0;
+    if (it == g_btnIdx.end() || it->second < 0) return false;
+    return (g_js.rgbButtons[it->second] & 0x80) != 0;
 }
 
-static bool IsCombo(const std::string& action) {
-    auto it = g_actions.find(action);
-    if (it == g_actions.end()) return false;
-    const std::string& v = it->second;
-    size_t plus = v.find('+');
-    if (plus == std::string::npos) return false;
-    std::string a = v.substr(0, plus);
-    std::string b = v.substr(plus + 1);
-    auto ai = g_btnIdx.find(a);
-    auto bi = g_btnIdx.find(b);
-    if (ai == g_btnIdx.end() || bi == g_btnIdx.end()) return false;
-    return (g_js.rgbButtons[ai->second] & 0x80) && (g_js.rgbButtons[bi->second] & 0x80);
-}
-
-static bool IsActionActive(const std::string& action) {
-    auto it = g_actions.find(action);
-    if (it == g_actions.end()) return false;
-    if (it->second.find('+') != std::string::npos) return IsCombo(action);
-    int idx = BtnOf(action);
-    if (idx < 0 || idx >= 128) return false;
-    return (g_js.rgbButtons[idx] & 0x80) != 0;
-}
-
-// -------------------- Input Send --------------------
+// -------------------- Input Senders --------------------
 static void MoveMouse(int dx, int dy) {
     if (dx == 0 && dy == 0) return;
-    INPUT in = {};
-    in.type = INPUT_MOUSE;
-    in.mi.dx = dx; in.mi.dy = dy;
-    in.mi.dwFlags = MOUSEEVENTF_MOVE;
+    INPUT in = {}; in.type = INPUT_MOUSE; in.mi.dx = dx; in.mi.dy = dy; in.mi.dwFlags = MOUSEEVENTF_MOVE;
     SendInput(1, &in, sizeof(INPUT));
 }
 
 static void ScrollMouse(int amount) {
     if (amount == 0) return;
-    INPUT in = {};
-    in.type = INPUT_MOUSE;
-    in.mi.mouseData = (DWORD)amount;
-    in.mi.dwFlags = MOUSEEVENTF_WHEEL;
+    INPUT in = {}; in.type = INPUT_MOUSE; in.mi.mouseData = (DWORD)amount; in.mi.dwFlags = MOUSEEVENTF_WHEEL;
     SendInput(1, &in, sizeof(INPUT));
 }
 
 static void MouseClick(DWORD flag) {
-    INPUT in = {};
-    in.type = INPUT_MOUSE;
-    in.mi.dwFlags = flag;
+    INPUT in = {}; in.type = INPUT_MOUSE; in.mi.dwFlags = flag;
     SendInput(1, &in, sizeof(INPUT));
 }
 
 static void KeyAction(WORD vk, bool down) {
     if (vk == 0) return;
-    INPUT in = {};
-    in.type = INPUT_KEYBOARD;
-    in.ki.wVk = vk;
-    in.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
+    INPUT in = {}; in.type = INPUT_KEYBOARD; in.ki.wVk = vk; in.ki.dwFlags = down ? 0 : KEYEVENTF_KEYUP;
     SendInput(1, &in, sizeof(INPUT));
+}
+
+static void ExecuteBinding(const std::string& btnName, bool isPressed, const ActionBinding& act) {
+    static std::map<std::string, bool> lastStates;
+    bool lastState = lastStates[btnName];
+
+    if (isPressed && !lastState) { // Tombol Baru Ditekan
+        if (act.mouseAction == 1) MouseClick(MOUSEEVENTF_LEFTDOWN);
+        else if (act.mouseAction == 2) MouseClick(MOUSEEVENTF_RIGHTDOWN);
+        else if (act.mouseAction == 3) MouseClick(MOUSEEVENTF_MIDDLEDOWN);
+        else {
+            for (WORD vk : act.vkCodes) KeyAction(vk, true);
+        }
+    } else if (!isPressed && lastState) { // Tombol Dilepas
+        if (act.mouseAction == 1) MouseClick(MOUSEEVENTF_LEFTUP);
+        else if (act.mouseAction == 2) MouseClick(MOUSEEVENTF_RIGHTUP);
+        else if (act.mouseAction == 3) MouseClick(MOUSEEVENTF_MIDDLEUP);
+        else {
+            // Lepas kebalikan dari urutan tekan (untuk combo)
+            for (auto it = act.vkCodes.rbegin(); it != act.vkCodes.rend(); ++it) KeyAction(*it, false);
+        }
+    }
+    lastStates[btnName] = isPressed;
 }
 
 static float NormStick(LONG v) {
     if (std::abs(v) < g_deadzone) return 0.0f;
     float s = (v > 0 ? 1.0f : -1.0f) * (float)(std::abs(v) - g_deadzone) / (32767.0f - g_deadzone);
-    if (s >  1.0f) s =  1.0f;
-    if (s < -1.0f) s = -1.0f;
+    if (s > 1.0f) s = 1.0f; if (s < -1.0f) s = -1.0f;
     return s;
 }
 
@@ -196,11 +198,8 @@ static bool InitDirectInput() {
     if (FAILED(g_pDev->SetCooperativeLevel(GetConsoleWindow(), DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) return false;
 
     DIPROPRANGE range;
-    range.diph.dwSize = sizeof(DIPROPRANGE);
-    range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
-    range.diph.dwHow = DIPH_BYOFFSET;
-    range.lMin = -32768; range.lMax = 32767;
-
+    range.diph.dwSize = sizeof(DIPROPRANGE); range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
+    range.diph.dwHow = DIPH_BYOFFSET; range.lMin = -32768; range.lMax = 32767;
     range.diph.dwObj = DIJOFS_X;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
     range.diph.dwObj = DIJOFS_Y;  g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
     range.diph.dwObj = DIJOFS_RX; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
@@ -209,20 +208,20 @@ static bool InitDirectInput() {
     range.diph.dwObj = DIJOFS_RZ; g_pDev->SetProperty(DIPROP_RANGE, &range.diph);
 
     g_pDev->Acquire();
-    Sleep(50);
-    g_pDev->Poll();
-    
+    Sleep(50); g_pDev->Poll();
     if (SUCCEEDED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) {
         neutralLX = g_js.lX; neutralLY = g_js.lY;
-        neutralRX = g_js.lRx; neutralRY = g_js.lRy;
-        neutralZ = g_js.lZ; neutralRZ = g_js.lRz;
+        if (std::abs(g_js.lRx) < 1000 && std::abs(g_js.lRy) < 1000) {
+            g_useZForRightStick = true; neutralRX = g_js.lZ; neutralRY = g_js.lRz;
+        } else {
+            g_useZForRightStick = false; neutralRX = g_js.lRx; neutralRY = g_js.lRy;
+        }
     }
     return true;
 }
 
 static void ToggleConsole() {
-    HWND h = GetConsoleWindow();
-    if (!h) return;
+    HWND h = GetConsoleWindow(); if (!h) return;
     if (g_consoleHidden) { ShowWindow(h, SW_SHOW); SetForegroundWindow(h); g_consoleHidden = false; }
     else { ShowWindow(h, SW_HIDE); g_consoleHidden = true; }
 }
@@ -232,147 +231,46 @@ static void ProcessFrame() {
     if (FAILED(g_pDev->Poll())) { g_pDev->Acquire(); return; }
     if (FAILED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) { g_pDev->Acquire(); return; }
 
-    if (g_debug) {
-        printf("DEBUG: LX=%6d LY=%6d | RX=%6d RY=%6d | Z=%6d RZ=%6d\n",
-            g_js.lX, g_js.lY, g_js.lRx, g_js.lRy, g_js.lZ, g_js.lRz);
-    }
-
     bool isConsoleFocused = (GetForegroundWindow() == GetConsoleWindow());
+    
+    // Cek tombol Options untuk sembunyikan console (tetap default)
     static bool lastHide = false;
-    bool curHide = IsActionActive("Options");
-    if (curHide && !lastHide) ToggleConsole();
+    bool curHide = IsButtonPressed("Options");
+    if (curHide && !lastHide && !isConsoleFocused) ToggleConsole();
     lastHide = curHide;
 
     if (isConsoleFocused && !g_consoleHidden) return;
 
-    // ====================================================================
-    // LOGIKA ANALOG (AUTO DETECT)
-    // ====================================================================
+    // Analog
     float lx = NormStick(g_js.lX - neutralLX);
     float ly = NormStick(g_js.lY - neutralLY);
-    
-    // Baca RX/RY
-    float rx = NormStick(g_js.lRx - neutralRX);
-    float ry = NormStick(g_js.lRy - neutralRY);
-    
-    // Baca Z/RZ (Fallback jika RX/RY 0)
-    if (rx == 0.0f && ry == 0.0f) {
-        rx = NormStick(g_js.lZ - neutralZ);
-        ry = NormStick(g_js.lRz - neutralRZ);
-    }
-
+    float rx = NormStick((g_useZForRightStick ? g_js.lZ : g_js.lRx) - neutralRX);
+    float ry = NormStick((g_useZForRightStick ? g_js.lRz : g_js.lRy) - neutralRY);
     int speed = g_speeds[g_speedIdx];
 
-    // Eksekusi Stik Kiri
-    std::string leftFunc = g_analogFuncs["LeftStick"];
-    if (leftFunc == "Mouse") {
-        MoveMouse((int)(lx * std::abs(lx) * speed), (int)(ly * std::abs(ly) * speed));
-    } else if (leftFunc == "Scroll") {
-        if (std::abs(ly) > 0.2f) ScrollMouse((int)(ly * 120.0f));
-    }
+    if (g_analogFuncs["LeftStick"] == "Mouse") MoveMouse((int)(lx * std::abs(lx) * speed), (int)(ly * std::abs(ly) * speed));
+    else if (g_analogFuncs["LeftStick"] == "Scroll" && std::abs(ly) > 0.2f) ScrollMouse((int)(ly * 120.0f));
 
-    // Eksekusi Stik Kanan
-    std::string rightFunc = g_analogFuncs["RightStick"];
-    if (rightFunc == "Mouse") {
-        MoveMouse((int)(rx * std::abs(rx) * speed), (int)(ry * std::abs(ry) * speed));
-    } else if (rightFunc == "Scroll") {
-        if (std::abs(ry) > 0.2f) ScrollMouse((int)(ry * 120.0f));
-    }
-    // ====================================================================
+    if (g_analogFuncs["RightStick"] == "Mouse") MoveMouse((int)(rx * std::abs(rx) * speed), (int)(ry * std::abs(ry) * speed));
+    else if (g_analogFuncs["RightStick"] == "Scroll" && std::abs(ry) > 0.2f) ScrollMouse((int)(ry * 120.0f));
 
-    // --- Aksi Tombol Bawaan ---
-    static bool lastL = false, lastR = false, lastM = false;
-    bool curL = IsActionActive("MouseLeft"); bool curR = IsActionActive("MouseRight"); bool curM = IsActionActive("MouseMiddle");
-    if (curL && !lastL) MouseClick(MOUSEEVENTF_LEFTDOWN); if (!curL && lastL) MouseClick(MOUSEEVENTF_LEFTUP);
-    if (curR && !lastR) MouseClick(MOUSEEVENTF_RIGHTDOWN); if (!curR && lastR) MouseClick(MOUSEEVENTF_RIGHTUP);
-    if (curM && !lastM) MouseClick(MOUSEEVENTF_MIDDLEDOWN); if (!curM && lastM) MouseClick(MOUSEEVENTF_MIDDLEUP);
-    lastL = curL; lastR = curR; lastM = curM;
-
-    static bool lastCross = false; bool curCross = IsActionActive("Cross");
-    if (curCross && !lastCross) MouseClick(MOUSEEVENTF_LEFTDOWN); if (!curCross && lastCross) MouseClick(MOUSEEVENTF_LEFTUP);
-    lastCross = curCross;
-
-    static bool lastEnter = false; bool curEnter = IsActionActive("Circle");
-    if (curEnter != lastEnter) KeyAction(VK_RETURN, curEnter); lastEnter = curEnter;
-
-    static bool lastEsc = false; bool curEsc = IsActionActive("Share");
-    if (curEsc != lastEsc) KeyAction(VK_ESCAPE, curEsc); lastEsc = curEsc;
-
-    static bool lastF2 = false; bool curF2 = IsActionActive("R3");
-    if (curF2 != lastF2) KeyAction(VK_F2, curF2); lastF2 = curF2;
-
-    static bool lastVk = false; bool curVk = IsActionActive("Triangle");
-    if (curVk != lastVk) KeyAction(VK_F24, curVk); lastVk = curVk;
-
-    static bool lastL2 = false, lastR2 = false;
-    bool l2On = IsActionActive("L2"); bool r2On = IsActionActive("R2");
-    if (l2On != lastL2) KeyAction(VK_SPACE, l2On); if (r2On != lastR2) KeyAction(VK_BACK, r2On);
-    lastL2 = l2On; lastR2 = r2On;
-
-    DWORD pov = g_js.rgdwPOV[0];
-    static bool upD=false,dnD=false,lfD=false,rtD=false;
-    bool up=false,dn=false,lf=false,rt=false;
-    if (pov != 0xFFFFFFFF) {
-        if (pov > 31500 || pov <= 4500)  up = true;
-        if (pov > 4500  && pov <= 13500) rt = true;
-        if (pov > 13500 && pov <= 22500) dn = true;
-        if (pov > 22500 && pov <= 31500) lf = true;
-    }
-    if (up != upD) { KeyAction(VK_UP, up); upD = up; }
-    if (dn != dnD) { KeyAction(VK_DOWN, dn); dnD = dn; }
-    if (lf != lfD) { KeyAction(VK_LEFT, lf); lfD = lf; }
-    if (rt != rtD) { KeyAction(VK_RIGHT, rt); rtD = rt; }
-
-    static bool lastSpeedCombo = false; bool speedCombo = IsActionActive("SpeedCycle");
-    if (speedCombo && !lastSpeedCombo) {
-        g_speedIdx = (g_speedIdx + 1) % 3;
-        printf("[i] Kecepatan: level %d (speed=%d)\n", g_speedIdx + 1, g_speeds[g_speedIdx]);
-    }
-    lastSpeedCombo = speedCombo;
-
-    static bool lastDisable = false; static bool disabled = false;
-    bool disableCombo = IsActionActive("Disable");
-    if (disableCombo && !lastDisable) {
-        disabled = !disabled;
-        printf("[i] Gopher %s\n", disabled ? "DIMATIKAN" : "DIAKTIFKAN");
-    }
-    lastDisable = disableCombo;
-
-    if (disabled) return;
-
-    for (const auto& pair : g_customKeys) {
-        std::string btnName = pair.first;
-        int vkCode = pair.second;
-        bool isPressed = IsButtonPressed(btnName);
-        
-        static std::map<std::string, bool> lastCustomStates;
-        if (isPressed && !lastCustomStates[btnName]) KeyAction(vkCode, true);  
-        if (!isPressed && lastCustomStates[btnName]) KeyAction(vkCode, false); 
-        lastCustomStates[btnName] = isPressed;
+    // Eksekusi semua tombol yang ada di [Bindings]
+    for (const auto& pair : g_bindings) {
+        ExecuteBinding(pair.first, IsButtonPressed(pair.first), pair.second);
     }
 }
 
 int main(int argc, char** argv) {
     SetConsoleOutputCP(CP_UTF8);
-    for (int i = 1; i < argc; i++) {
-        if (std::string(argv[i]) == "--debug") g_debug = true;
-    }
-
     printf("=====================================================\n");
-    printf("  DS4Gopher - Gopher360-style untuk DualShock 4\n");
+    printf("  DS4Gopher - Steam-like Controller Mapper\n");
     printf("=====================================================\n");
 
     LoadConfig("config.ini");
     if (!InitDirectInput()) { printf("Tekan Enter untuk keluar...\n"); getchar(); return 1; }
 
-    printf("[i] L-Stick : %s\n", g_analogFuncs["LeftStick"].c_str());
-    printf("[i] R-Stick : %s\n", g_analogFuncs["RightStick"].c_str());
     printf("[i] Ctrl+C untuk keluar.\n");
-
-    while (g_running) {
-        ProcessFrame();
-        Sleep(16);
-    }
+    while (g_running) { ProcessFrame(); Sleep(16); }
 
     if (g_pDev) { g_pDev->Unacquire(); g_pDev->Release(); }
     if (g_pDI)  g_pDI->Release();
