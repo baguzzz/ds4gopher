@@ -1,5 +1,5 @@
 // =====================================================================
-//  DS4Gopher - Steam-like Controller Mapper untuk DualShock 4
+//  DS4Gopher - Steam-like Controller Mapper (No Terminal Restriction)
 // =====================================================================
 #define DIRECTINPUT_VERSION 0x0800
 #include <windows.h>
@@ -29,7 +29,6 @@ static int                   g_speedIdx      = 1;
 static int                   g_speeds[3]     = { 6, 14, 28 };
 static int                   g_deadzone      = 8000;
 
-// Kalibrasi Titik Netral untuk SEMUA sumbu analog
 static LONG neutralLX = 0, neutralLY = 0;
 static LONG neutralRX = 0, neutralRY = 0; 
 static LONG neutralZ  = 0, neutralRZ  = 0;
@@ -44,7 +43,7 @@ static std::map<std::string, int> g_btnIdx = {
 
 struct ActionBinding {
     std::vector<WORD> vkCodes;
-    int mouseAction; // 0 = None, 1 = Left, 2 = Right, 3 = Middle
+    int mouseAction;
 };
 
 static std::map<std::string, ActionBinding> g_bindings;
@@ -180,12 +179,7 @@ static bool InitDirectInput() {
     if (FAILED(DirectInput8Create(GetModuleHandle(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8, (void**)&g_pDI, nullptr))) return false;
     if (FAILED(g_pDI->EnumDevices(DI8DEVCLASS_GAMECTRL, EnumCallback, nullptr, DIEDFL_ATTACHEDONLY)) || !g_pDev) return false;
     if (FAILED(g_pDev->SetDataFormat(&c_dfDIJoystick2))) return false;
-
-    // Gunakan BACKGROUND agar tetap membaca meskipun window game sedang aktif
-    if (FAILED(g_pDev->SetCooperativeLevel(GetConsoleWindow(), DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) {
-        printf("[X] SetCooperativeLevel gagal. Pastikan Run as Administrator.\n");
-        return false;
-    }
+    if (FAILED(g_pDev->SetCooperativeLevel(GetConsoleWindow(), DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) return false;
 
     DIPROPRANGE range;
     range.diph.dwSize = sizeof(DIPROPRANGE); range.diph.dwHeaderSize = sizeof(DIPROPHEADER);
@@ -199,8 +193,6 @@ static bool InitDirectInput() {
 
     g_pDev->Acquire();
     Sleep(50); g_pDev->Poll();
-    
-    // Kalibrasi awal semua sumbu
     if (SUCCEEDED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) {
         neutralLX = g_js.lX; neutralLY = g_js.lY;
         neutralRX = g_js.lRx; neutralRY = g_js.lRy;
@@ -220,26 +212,22 @@ static void ProcessFrame() {
     if (FAILED(g_pDev->Poll())) { g_pDev->Acquire(); return; }
     if (FAILED(g_pDev->GetDeviceState(sizeof(DIJOYSTATE2), &g_js))) { g_pDev->Acquire(); return; }
 
-    bool isConsoleFocused = (GetForegroundWindow() == GetConsoleWindow());
-    
+    // Tombol Options tetap bisa menyembunyikan terminal
     static bool lastHide = false;
     bool curHide = IsButtonPressed("Options");
-    if (curHide && !lastHide && !isConsoleFocused) ToggleConsole();
+    if (curHide && !lastHide) ToggleConsole();
     lastHide = curHide;
 
-    if (isConsoleFocused && !g_consoleHidden) return;
+    // [DIHAPUS] Baris "if (isConsoleFocused && !g_consoleHidden) return;" dihilangkan.
+    // Sekarang input tetap jalan meskipun terminal di-klik.
 
-    // Baca semua kemungkinan sumbu untuk stik kiri
     float lx = NormStick(g_js.lX - neutralLX);
     float ly = NormStick(g_js.lY - neutralLY);
-
-    // Baca semua kemungkinan sumbu untuk stik kanan (Rx/Ry DAN Z/Rz)
     float rx1 = NormStick(g_js.lRx - neutralRX);
     float ry1 = NormStick(g_js.lRy - neutralRY);
     float rx2 = NormStick(g_js.lZ - neutralZ);
     float ry2 = NormStick(g_js.lRz - neutralRZ);
 
-    // Pilih nilai yang paling besar pergerakannya (deteksi otomatis 100% anti-gagal)
     float rx = (std::abs(rx1) > std::abs(rx2)) ? rx1 : rx2;
     float ry = (std::abs(ry1) > std::abs(ry2)) ? ry1 : ry2;
 
